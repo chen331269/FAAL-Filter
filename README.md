@@ -239,6 +239,7 @@ FAAL 特别适合以下场景：
 
 FAAL 相比 One Euro 的**额外价值**是"甩枪结束后主动保抑制"——这是 One Euro 本身不具备的能力。
 
+[![FAAL 滤波器实机演示]<img width="2048" height="1053" alt="封面" src="https://github.com/user-attachments/assets/7f4b978e-124c-4a89-aeef-b5cc84c22119" />](https://www.bilibili.com/video/BV1iwxr6VE5q/)
 ---
 
 ## 致谢
