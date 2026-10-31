@@ -130,7 +130,7 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 | `dropCurve` | 2.0 | 抑制曲线形状（物理自然值） |
 | `signChangeThr` | 0.5 | 符号翻转触发阈值 |
 | `freezeDurationSec` | 0.024 | 反转后冻结时长（秒） |
-| `enableVectorReversal` | off | 矢量反转检测开关 |
+| `enableVectorReversal` | 0 | 矢量反转检测开关 |
 | `dirChangeAngleRad` | 1.2 | 矢量反转角度阈值（弧度） |
 
 ### 平滑参数（2 个）
