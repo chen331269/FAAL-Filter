@@ -131,7 +131,8 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 | `signChangeThr` | 0.5 | 符号翻转触发阈值 |
 | `freezeDurationSec` | 0.024 | 反转后冻结时长（秒） |
 | `enableVectorReversal` | 0 | 矢量反转检测开关 |
-| `dirChangeAngleRad` | 1.2 | 矢量反转角度阈值（弧度） |
+| `dirChangeMagRatio` | 0.3 | 矢量反转的**法向比例阈值**（越大越严苛） |
+| `dirChangeAngleRad` | 1.2 | 矢量反转的**角度阈值**（弧度） |
 
 ### 平滑参数（2 个）
 
