@@ -61,6 +61,9 @@ struct FaalParams
 	// Only fc_min and beta. Derivative passthrough (alpha_d = 1).
 	float oneEuroFcMin = 2.0f;
 	float oneEuroBeta = 0.08f;
+	// Soft-tiered smoothing: above this speed (deg/s) nothing is smoothed at all.
+	// 0 = One Euro bypassed entirely (suppression only).
+	float smoothThreshold = 0.0f;
 
 	// ---- Vector reversal detection --------------------------------------
 	float enableVectorReversal = 0.0f;

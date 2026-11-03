@@ -55,7 +55,32 @@ static float oneEuroFilter(float x, float dt, float fc_min, float beta,
 // ---------------------------------------------------------------------------
 //  Per-axis processing
 // ---------------------------------------------------------------------------
-static float doFilter(AxisState& st, float v, float dt, bool forceSuppress)
+// Same filter, but the cutoff is decided by the caller: the tier split needs the
+// speed of the whole vector, so the per-axis function must not derive its own.
+static float oneEuroWithCutoff(float x, float dt, float fc, float& x_prev)
+{
+	float tau = 1.0f / (2.0f * 3.14159265f * fc + 0.00001f);
+	float alpha = 1.0f / (1.0f + tau / dt);
+	float x_out = alpha * x + (1.0f - alpha) * x_prev;
+	x_prev = x_out;
+	return x_out;
+}
+
+// Tier weight for the soft-tiered split: 0 = fully smoothed, 1 = fully direct.
+static float smoothTierWeight(float speed)
+{
+	float top = g_params.smoothThreshold;
+	if (top <= 0.0f)
+		return 1.0f;
+	float bottom = top * 0.5f;
+	if (speed <= bottom)
+		return 0.0f;
+	if (speed >= top)
+		return 1.0f;
+	return (speed - bottom) / (top - bottom);
+}
+static float doFilter(AxisState& st, float v, float dt, bool forceSuppress,
+  float tierWeight, float vectorSpeed)
 {
 	float absV = faal_abs(v);
 
@@ -156,12 +181,15 @@ static float doFilter(AxisState& st, float v, float dt, bool forceSuppress)
 
 	st.prevAbsV = absV;
 
-	// ---- 10) One Euro smoothing -----------------------------------------
-	float out = oneEuroFilter(v, dt,
-	  g_params.oneEuroFcMin,
-	  g_params.oneEuroBeta,
-	  st.oneEuroPrev,
-	  st.oneEuroDeriv);
+	// ---- 10) Tiered One Euro smoothing ----------------------------------
+	// The input is split by magnitude rather than the output blended: whatever goes
+	// into the filter is eventually consumed, so displacement is preserved and a big
+	// movement never loads the filter's state.
+	float directPart = v * tierWeight;
+	float smoothed = oneEuroWithCutoff(v * (1.0f - tierWeight), dt,
+	  g_params.oneEuroFcMin + g_params.oneEuroBeta * vectorSpeed,
+	  st.oneEuroPrev);
+	float out = directPart + smoothed;
 
 	// ---- 11) Apply suppression ------------------------------------------
 	out *= (1.0f - st.suppressHyst);
@@ -227,9 +255,6 @@ void faal_filter(float& outX, float& outY, float dt)
 	}
 
 	float alpha = 1.0f - expf(-dt / g_params.smoothTimeSec);
-	s_smoothDirX += alpha * (outX - s_smoothDirX);
-	s_smoothDirY += alpha * (outY - s_smoothDirY);
-
 	bool forceSuppress = false;
 	if (g_params.enableVectorReversal > 0.5f)
 	{
@@ -249,8 +274,14 @@ void faal_filter(float& outX, float& outY, float dt)
 		}
 	}
 
-	outX = doFilter(s_faal_stateX, outX, dt, forceSuppress);
-	outY = doFilter(s_faal_stateY, outY, dt, forceSuppress);
+	// Compare first, then absorb (updating first under-reads the turn).
+	s_smoothDirX += alpha * (outX - s_smoothDirX);
+	s_smoothDirY += alpha * (outY - s_smoothDirY);
+
+	float speed2 = sqrtf(outX * outX + outY * outY);
+	float w2 = smoothTierWeight(speed2);
+	outX = doFilter(s_faal_stateX, outX, dt, forceSuppress, w2, speed2);
+	outY = doFilter(s_faal_stateY, outY, dt, forceSuppress, w2, speed2);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,17 +301,20 @@ void faal_filter(float& outX, float& outY, float& outZ, float dt)
 	}
 
 	float alpha = 1.0f - expf(-dt / g_params.smoothTimeSec);
-	s_smoothDirX += alpha * (outX - s_smoothDirX);
-	s_smoothDirY += alpha * (outY - s_smoothDirY);
-	s_smoothDirZ += alpha * (outZ - s_smoothDirZ);
-
 	bool forceSuppress = checkVectorReversal3D(
 	  outX, outY, outZ,
 	  s_smoothDirX, s_smoothDirY, s_smoothDirZ);
 
-	outX = doFilter(s_faal_stateX, outX, dt, forceSuppress);
-	outY = doFilter(s_faal_stateY, outY, dt, forceSuppress);
-	outZ = doFilter(s_faal_stateZ, outZ, dt, forceSuppress);
+	// Compare first, then absorb (see the two-axis entry point).
+	s_smoothDirX += alpha * (outX - s_smoothDirX);
+	s_smoothDirY += alpha * (outY - s_smoothDirY);
+	s_smoothDirZ += alpha * (outZ - s_smoothDirZ);
+
+	float speed3 = sqrtf(outX * outX + outY * outY + outZ * outZ);
+	float w3 = smoothTierWeight(speed3);
+	outX = doFilter(s_faal_stateX, outX, dt, forceSuppress, w3, speed3);
+	outY = doFilter(s_faal_stateY, outY, dt, forceSuppress, w3, speed3);
+	outZ = doFilter(s_faal_stateZ, outZ, dt, forceSuppress, w3, speed3);
 }
 
 void ResetFaalFilter()
