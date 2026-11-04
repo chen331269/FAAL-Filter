@@ -66,6 +66,15 @@ static float oneEuroWithCutoff(float x, float dt, float fc, float& x_prev)
 	return x_out;
 }
 
+// 0 below e0, 1 above e1, smooth in between.
+static float smoothstepf(float e0, float e1, float x)
+{
+	if (e1 <= e0)
+		return (x >= e1) ? 1.0f : 0.0f;
+	float t = (x - e0) / (e1 - e0);
+	t = faal_clamp(t, 0.0f, 1.0f);
+	return t * t * (3.0f - 2.0f * t);
+}
 // Tier weight for the soft-tiered split: 0 = fully smoothed, 1 = fully direct.
 static float smoothTierWeight(float speed)
 {
@@ -164,6 +173,16 @@ static float doFilter(AxisState& st, float v, float dt, bool forceSuppress,
 	{
 		rawSuppress = 1.0f;
 		st.suppressHyst = 1.0f;
+	}
+
+	// ---- 8b) Hand-off gate ----------------------------------------------
+	// Below the smoothing threshold the signal cannot separate intent from
+	// tremor, so suppression stays out of it and the low-pass does the work.
+	if (g_params.smoothThreshold > 0.0f)
+	{
+		float gate = smoothstepf(g_params.smoothThreshold,
+		  2.0f * g_params.smoothThreshold, vectorSpeed);
+		rawSuppress *= gate;
 	}
 
 	// ---- 9) Hysteresis (self-adaptive fall) -----------------------------
