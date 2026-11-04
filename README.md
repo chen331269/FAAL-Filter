@@ -157,7 +157,7 @@ out = V·w + OneEuro(V·(1−w))
 
 `oneEuroBeta` 用的是完整向量速度（不是被 `(1−w)` 缩水后的分量），这样"越快越少平滑"在带内仍然成立。
 
-分层平滑的完整原理（含数值示例、为什么拆输入而不是混合输出、为什么两轴共用一个 fc）见 [docs/smoothing.md](docs/smoothing.md)。
+分层平滑的完整原理（含数值示例、为什么拆输入而不是混合输出、为什么两轴共用一个 fc）见 [docs/smoothing.md](docs/smoothing.md)；"一帧输入从进到出经过哪些步骤"见 [docs/pipeline.md](docs/pipeline.md)。
 
 **总共约 13 个可调参数**——相比大多数体感滤波器动辄 30+ 参数，这已经是最精简的配置。
 
