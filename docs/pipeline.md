@@ -2,6 +2,18 @@
 
 一帧输入从进来到出去，经过哪些步骤、每一步归谁管。配合 [`smoothing.md`](smoothing.md) 一起看。
 
+> ## ⚠️ 调参前先看自动校准
+>
+> 如果上层（JSM 的 AUTO_CALIBRATE_GYRO，或任何手柄驱动的漂移补偿）开着自动校准，
+> 它会把这个速度以下的一切当作零偏慢慢减掉——**包括玩家真实但缓慢的转动**。
+>
+> 表现为"慢速移动被吃掉、像死区"，而数据里看到的输入**已经是减完之后的值**，
+> 从它出发去分析滤波器，会得出完全错误的结论（我们就为此浪费了一整天）。
+>
+> 调 FAAL 之前，先确认自动校准的状态。要慢速精度就关掉它，让 FAAL 的漂移保持来兜底。
+
+> *（为此烧掉的 token，我的 token 啊～！）*
+
 ## 总览
 
 ```
@@ -22,13 +34,10 @@
   e. 斜率抑制      rawSuppress = clamp(dropSpeed · 灵敏度) ^ 曲线
   f. 过零覆盖      符号翻转 + 幅度跳变 → rawSuppress = 1
   g. 反转覆盖      forceSuppress → rawSuppress = 1
-  ─────────────────────────────────────────
-  h. 交接门限      rawSuppress *= smoothstep(T, 2T, speed)
-  ─────────────────────────────────────────
-  i. 迟滞平滑      suppressHyst 向 rawSuppress 靠拢
-  j. 分层平滑      out = v·w + OneEuro(v·(1−w), fc = fc_min + beta·speed)
-  k. 施加抑制      out *= (1 − suppressHyst)
-  l. 冻结窗口      suppressHyst > 阈值 → out *= freezeMul，持续 N 毫秒
+  h. 迟滞平滑      suppressHyst 向 rawSuppress 靠拢
+  i. 分层平滑      out = v·w + OneEuro(v·(1−w), fc = fc_min + beta·speed)
+  j. 施加抑制      out *= (1 − suppressHyst)
+  k. 冻结窗口      suppressHyst > 阈值 → out *= freezeMul，持续 N 毫秒
 ```
 
 ## 三个区间
