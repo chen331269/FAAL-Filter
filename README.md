@@ -21,6 +21,66 @@
 
 ---
 
+---
+
+## 快速上手（单头文件 C99）
+
+`faal.h` 是完整的实现，声明和代码在同一个文件里（stb 风格）：
+
+```c
+#define FAAL_IMPLEMENTATION   /* 只在一个翻译单元里定义 */
+#include "faal.h"
+
+Faal *f = faal_new();
+FaalParams p;
+faal_defaults(&p);
+p.smoothThreshold = 4.0f;
+faal_set_params(f, &p);
+
+float v[2] = { 10.0f, 3.0f };
+faal_process(f, v, 2, 0.001f);   /* 原地滤波，2 或 3 轴 */
+faal_free(f);
+```
+
+- 纯 C99，只依赖 `math.h` / `stdlib.h` / `string.h`
+- 无全局状态、无线程、无锁
+- `faal_new` 走 malloc；`faal_init` 用调用方给的内存（嵌入式）
+- 上下文约 192 字节
+
+### 接进别的语言
+
+| 语言 | 方式 |
+|---|---|
+| C / C++ | 定义 `FAAL_IMPLEMENTATION` 后包含 |
+| Python | 编成 DLL，ctypes 包装 |
+| C# | 编成 DLL，P/Invoke |
+| Rust | `build.rs` 里用 `cc` 编一个只包含 `faal.h` 的 TU |
+
+DLL 构建（Windows）：
+
+```powershell
+cl /O2 /LD /DFAAL_BUILD_DLL /c faal_shim.c /Fe:faal.dll
+```
+
+`faal_shim.c` 只有两行：`#define FAAL_IMPLEMENTATION` 和 `#include "faal.h"`。
+不定义 `FAAL_BUILD_DLL` 时导出表会是空的。
+
+### 参数扩展
+
+`FaalParams` 第一个字段固定是 `size`（调用方填 `sizeof(FaalParams)`）。以后加参数
+追加在末尾，老调用方传小的 `size` 时库只读它认得的字段。
+
+### 等价性
+
+`reference/` 是最早的 C++ 实现，留作回归基准。两者在以下数据上逐帧比对：
+
+| 数据 | 帧数 | 最大差 |
+|---|---|---|
+| 合成（跟靶 / 甩枪 / 静止 / 抖动 / 尖峰） | 400,000 | 2D 4.24e-05，3D 0 |
+| 真实录制 | 17,930 | 0（逐位一致） |
+| 真实录制 | 13,586 | 8 帧差异，最大 0.132 |
+
+2D 的 4e-5 来自阈值边界上的一次分支翻转（1 ULP 差异被非线性放大），随后自行收敛。
 ## 这是什么
 
 FAAL 是一个轻量级、帧率无关的陀螺仪信号处理器，用于解决体感瞄准中三类最难处理的抖动：
