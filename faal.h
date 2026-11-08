@@ -69,6 +69,10 @@ typedef struct FaalParams
 	float dirChangeMagRatio;
 	float dirChangeAngleRad;
 	float smoothTimeSec;    /* s, memory of the reversal reference */
+
+	/* 0 = derive as hystFallTime * 0.446, which is the historical behaviour.
+	 * Set it to release suppression faster than it engages with a custom value. */
+	float hystFallFastTime;
 } FaalParams;
 
 typedef struct Faal Faal;
@@ -128,7 +132,7 @@ typedef struct Axis
 struct Faal
 {
 	FaalParams params;
-	float hystFallFastTime; /* derived: hystFallTime * 0.446 */
+	float cosAngleRad; /* cosf(dirChangeAngleRad), updated only when params change */
 	Axis ax;
 	Axis ay;
 	Axis az;
@@ -201,7 +205,7 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 
 	/* 2) frame-rate independent hysteresis coefficients */
 	riseFactor = 1.0f - expf(-dt / p->hystRiseTime);
-	fastFallFactor = 1.0f - expf(-dt / (p->hystFallTime * 0.446f));
+	fastFallFactor = 1.0f - expf(-dt / p->hystFallFastTime);
 	slowFallFactor = 1.0f - expf(-dt / p->hystFallTime);
 	fallFactor = fastFallFactor + (slowFallFactor - fastFallFactor) * st->suppressHyst;
 	fallFactor = clampf(fallFactor, 0.0f, 1.0f);
@@ -291,7 +295,7 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 	return out;
 }
 
-static int check_reversal_3d(const FaalParams *p,
+static int check_reversal_3d(const FaalParams *p, float cosAngle,
                              float cx, float cy, float cz,
                              float px, float py, float pz)
 {
@@ -309,7 +313,7 @@ static int check_reversal_3d(const FaalParams *p,
 	curLen = sqrtf(curLen2);
 	cosTheta = clampf((px * cx + py * cy + pz * cz) / (prevLen * curLen), -1.0f, 1.0f);
 
-	if (cosTheta >= cosf(p->dirChangeAngleRad))
+	if (cosTheta >= cosAngle)
 		return 0;
 
 	sinTheta = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f));
@@ -378,6 +382,8 @@ void faal_defaults(FaalParams *out)
 	out->dirChangeMagRatio = 0.3f;
 	out->dirChangeAngleRad = 1.570796f;
 	out->smoothTimeSec = 0.1f;
+
+	out->hystFallFastTime = 0.0f; /* auto: hystFallTime * 0.446 */
 }
 
 void faal_init(Faal *ctx, const FaalParams *params)
@@ -394,20 +400,34 @@ void faal_init(Faal *ctx, const FaalParams *params)
 		FaalParams d;
 		faal_defaults(&d);
 		ctx->params = d;
-		ctx->hystFallFastTime = d.hystFallTime * 0.446f;
+		ctx->cosAngleRad = cosf(d.dirChangeAngleRad);
 	}
 }
 
 void faal_set_params(Faal *ctx, const FaalParams *params)
 {
 	FaalParams p;
+	unsigned int size;
 
 	if (!ctx || !params)
 		return;
 
-	p = *params;
-	if (p.size == 0)
-		p.size = (unsigned int)sizeof(FaalParams);
+	/* Start from defaults, then copy only as many bytes as the caller says it
+	 * has: a host built against an older header keeps working instead of
+	 * reading past the end of its own struct. */
+	faal_defaults(&p);
+	size = params->size;
+	if (size == 0 || size > (unsigned int)sizeof(FaalParams))
+		size = (unsigned int)sizeof(FaalParams);
+	memcpy(&p, params, size);
+	p.size = (unsigned int)sizeof(FaalParams);
+
+	/* Reject a NaN parameter block outright: clampf cannot repair it, and one
+	 * NaN poisons every state it touches. */
+	if (!(p.peakDecayTime == p.peakDecayTime))
+	{
+		faal_defaults(&p);
+	}
 
 	/* Only clamp what would otherwise divide by zero or blow up. */
 	p.hystRiseTime = clampf(p.hystRiseTime, 1e-4f, 1.0f);
@@ -416,9 +436,23 @@ void faal_set_params(Faal *ctx, const FaalParams *params)
 	p.smoothTimeSec = clampf(p.smoothTimeSec, 1e-3f, 1.0f);
 	p.dropCurve = clampf(p.dropCurve, 0.1f, 10.0f);
 	p.oneEuroFcMin = clampf(p.oneEuroFcMin, 0.01f, 100.0f);
+	p.oneEuroBeta = clampf(p.oneEuroBeta, 0.0f, 100.0f);
+	p.dirChangeAngleRad = clampf(p.dirChangeAngleRad, 0.1f, 3.14159265f);
+	p.dirChangeMagRatio = clampf(p.dirChangeMagRatio, 0.0f, 1.0f);
+	p.driftThreshold = clampf(p.driftThreshold, 0.0f, 100.0f);
+	p.driftHoldTimeSec = clampf(p.driftHoldTimeSec, 0.0f, 10.0f);
+	p.freezeDurationSec = clampf(p.freezeDurationSec, 0.0f, 1.0f);
+	p.freezeOutMul = clampf(p.freezeOutMul, 0.0f, 1.0f);
+	p.smoothThreshold = clampf(p.smoothThreshold, 0.0f, 1000.0f);
+
+	/* 0 keeps the historical ratio, so existing configs behave identically. */
+	if (p.hystFallFastTime > 0.0f)
+		p.hystFallFastTime = clampf(p.hystFallFastTime, 1e-4f, p.hystFallTime);
+	else
+		p.hystFallFastTime = p.hystFallTime * 0.446f;
 
 	ctx->params = p;
-	ctx->hystFallFastTime = p.hystFallTime * 0.446f;
+	ctx->cosAngleRad = cosf(p.dirChangeAngleRad);
 }
 
 void faal_reset(Faal *ctx)
@@ -475,14 +509,14 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 				float cosTheta = clampf((ctx->dirX * x + ctx->dirY * y) /
 				                        (sqrtf(prevLen2) * sqrtf(curLen2)),
 				                        -1.0f, 1.0f);
-				if (cosTheta < cosf(p->dirChangeAngleRad))
+				if (cosTheta < ctx->cosAngleRad)
 					forceSuppress = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f)) >
 					                p->dirChangeMagRatio;
 			}
 		}
 		else
 		{
-			forceSuppress = check_reversal_3d(p, x, y, z, ctx->dirX, ctx->dirY, ctx->dirZ);
+			forceSuppress = check_reversal_3d(p, ctx->cosAngleRad, x, y, z, ctx->dirX, ctx->dirY, ctx->dirZ);
 		}
 	}
 
