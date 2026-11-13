@@ -200,7 +200,7 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 |---|---|---|
 | `oneEuroFcMin` | 2.0 | One Euro 基线截止频率（Hz） |
 | `oneEuroBeta` | 0.08 | One Euro 速度反馈系数 |
-| `smoothThreshold` | 0 | 分层平滑阈值（deg/s）。**0 = 自动推导为 5 × `oneEuroFcMin`**；负值 = 完全不平滑（只做抑制）；正值 = 显式指定 |
+| `smoothThreshold` | 0 | 分层平滑阈值（deg/s）。**0 = 自动推导为 2 × `oneEuroFcMin`**；负值 = 完全不平滑（只做抑制）；正值 = 显式指定 |
 | `speedLpMs` | 30 | 速度低通时间常数（ms）。分层权重和截止频率都读低通后的速度；0 = 关闭 |
 
 #### 分层平滑（soft tiered）

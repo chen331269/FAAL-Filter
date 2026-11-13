@@ -185,7 +185,7 @@ static float tier_weight(const FaalParams *p, float speed)
 	/* Derived when left at zero, so the only knobs are fc_min and beta: the
 	 * threshold scales with how hard the low end is being smoothed. */
 	if (top == 0.0f)
-		top = 5.0f * p->oneEuroFcMin;
+		top = 2.0f * p->oneEuroFcMin;
 
 	bottom = top * 0.5f;
 	if (speed <= bottom) return 0.0f;
