@@ -63,6 +63,7 @@ typedef struct FaalParams
 	float oneEuroFcMin;     /* Hz, cutoff floor */
 	float oneEuroBeta;      /* Hz per deg/s */
 	float smoothThreshold;  /* deg/s, above this nothing is smoothed. 0 = no smoothing */
+	float speedLpMs;        /* ms, low-pass on the speed feeding tier and fc. 0 = off */
 
 	/* vector reversal */
 	int   enableVectorReversal;
@@ -139,6 +140,7 @@ struct Faal
 	int first;
 	int mode; /* 0 unused, 2 two-axis, 3 three-axis */
 	float dirX, dirY, dirZ;
+	float speedLp; /* low-passed vector speed */
 };
 
 static float clampf(float v, float lo, float hi)
@@ -177,8 +179,13 @@ static float tier_weight(const FaalParams *p, float speed)
 	float top = p->smoothThreshold;
 	float bottom;
 
-	if (top <= 0.0f)
-		return 1.0f; /* threshold 0: no smoothing at all */
+	if (top < 0.0f)
+		return 1.0f; /* negative threshold: no smoothing at all */
+
+	/* Derived when left at zero, so the only knobs are fc_min and beta: the
+	 * threshold scales with how hard the low end is being smoothed. */
+	if (top == 0.0f)
+		top = 5.0f * p->oneEuroFcMin;
 
 	bottom = top * 0.5f;
 	if (speed <= bottom) return 0.0f;
@@ -377,6 +384,7 @@ void faal_defaults(FaalParams *out)
 	out->oneEuroFcMin = 2.0f;
 	out->oneEuroBeta = 0.5f;
 	out->smoothThreshold = 0.0f;
+	out->speedLpMs = 30.0f;
 
 	out->enableVectorReversal = 0;
 	out->dirChangeMagRatio = 0.3f;
@@ -444,6 +452,7 @@ void faal_set_params(Faal *ctx, const FaalParams *params)
 	p.freezeDurationSec = clampf(p.freezeDurationSec, 0.0f, 1.0f);
 	p.freezeOutMul = clampf(p.freezeOutMul, 0.0f, 1.0f);
 	p.smoothThreshold = clampf(p.smoothThreshold, 0.0f, 1000.0f);
+	p.speedLpMs = clampf(p.speedLpMs, 0.0f, 500.0f);
 
 	/* 0 keeps the historical ratio, so existing configs behave identically. */
 	if (p.hystFallFastTime > 0.0f)
@@ -529,6 +538,19 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 		speed = sqrtf(x * x + y * y);
 	else
 		speed = sqrtf(x * x + y * y + z * z);
+
+	if (p->speedLpMs > 0.0f)
+	{
+		float la = 1.0f - expf(-dt / (p->speedLpMs / 1000.0f));
+		ctx->speedLp += la * (speed - ctx->speedLp);
+		if (speed < ctx->speedLp * 0.25f)
+			ctx->speedLp = speed;
+		speed = ctx->speedLp;
+	}
+	else
+	{
+		ctx->speedLp = speed;
+	}
 
 	w = tier_weight(p, speed);
 
