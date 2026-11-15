@@ -116,7 +116,7 @@ FAAL 是一个轻量级、帧率无关的陀螺仪信号处理器，用于解决
 
 - ✅ **帧率无关** —— 所有时间常数、阈值都归一化到 1000Hz 基准，60Hz / 120Hz / 500Hz / 1000Hz 下行为一致
 - ✅ **自适应抑制** —— 甩枪后自动进入"黏滞"模式，正常跟随时自动进入"跟手"模式，无阈值跳变（像非牛顿流体）
-- ✅ **One Euro 平滑** —— 借用 Casiez 2012 的经典自适应低通，静止时稳、快速时准
+- ⛔ **平滑层已移除（2026-11-15）** —— FAAL 只做抑制，平滑交给宿主或独立滤波器；保留 `oneEuro*` 字段只为 API 兼容
 - ✅ **矢量反转检测** —— 3D 方向突变检测，替代分轴符号翻转（避免画圆变画方）
 - ✅ **零依赖** —— 只需要 `<math.h>`，无 STL、无框架
 
@@ -144,9 +144,7 @@ FAAL 的每轴处理管线：
   │                      fall = fastFall + (slowFall - fastFall) × suppressHyst
   │                      ↑ 甩枪后 fall 慢（黏），正常时 fall 快（跟手）
   │
-  ├──► [7] One Euro      fc = fc_min + β·|dω|（dω 为低通后的速度），自适应低通
-  │
-  └──► [8] 施加抑制       out = smoothed × (1 - suppressHyst)
+  └──► [7] 施加抑制       out = ω × (1 - suppressHyst)，冻结窗口内再乘 freezeOutMul
 ```
 
 ### 自适应 fall 的关键
@@ -198,9 +196,9 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 
 | 参数 | 默认 | 含义 |
 |---|---|---|
-| `oneEuroFcMin` | 2.0 | One Euro 基线截止频率（Hz） |
-| `oneEuroBeta` | 0.08 | One Euro 速度反馈系数 |
-| `smoothThreshold` | 0 | 分层平滑阈值（deg/s）。**0 = 自动推导为 2 × `oneEuroFcMin`**；负值 = 完全不平滑（只做抑制）；正值 = 显式指定 |
+| `oneEuroFcMin` | 2.0 | *(未使用)*  One Euro 基线截止频率（Hz） |
+| `oneEuroBeta` | 0.08 | *(未使用)*  One Euro 速度反馈系数 |
+| `smoothThreshold` | 0 | *(未使用)*  分层平滑阈值（deg/s）。**0 = 自动推导为 2 × `oneEuroFcMin`**；负值 = 完全不平滑（只做抑制）；正值 = 显式指定 |
 | `speedLpMs` | 30 | 速度低通时间常数（ms）。分层权重和截止频率都读低通后的速度；0 = 关闭 |
 
 #### 分层平滑（soft tiered）

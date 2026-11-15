@@ -201,7 +201,9 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 	float dropSpeed = 0.0f;
 	float riseFactor, fastFallFactor, slowFallFactor, fallFactor;
 	float rawSuppress = 0.0f;
-	float out, directPart, smoothed;
+	float out;
+	(void)tierWeight;   /* unused since the smoothing stage was removed */
+	(void)vectorSpeed;
 
 	/* 1) drop rate, normalised to 1 kHz and to the current peak */
 	if (st->peakValue > p->peakMinTrigger)
@@ -286,13 +288,10 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 
 	st->prevAbsV = absV;
 
-	/* 9) tiered One Euro. The filter is fed the slow share only, and is fed a
-	 *    zero share when everything is direct so its state drains. */
-	directPart = v * tierWeight;
-	smoothed = one_euro(v * (1.0f - tierWeight), dt,
-	                    p->oneEuroFcMin + p->oneEuroBeta * vectorSpeed,
-	                    &st->oneEuroPrev);
-	out = directPart + smoothed;
+	/* 9) no smoothing stage. FAAL suppresses and a separate filter smooths, so the
+	 *    sample passes through untouched here. The old tiered One Euro lived on
+	 *    this line; it was removed on 2026-11-15 (see HANDOFF 19.3). */
+	out = v;
 
 	/* 10) suppression and freeze window */
 	out *= (1.0f - st->suppressHyst);
