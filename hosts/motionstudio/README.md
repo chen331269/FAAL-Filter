@@ -61,7 +61,6 @@ fallbacks, and `params` accepts either.
 | `suppress_thr` | — | 0.45 | `hyst` level that opens the freeze window |
 | `freeze_mul` | — | 0.1 | how much leaks through while frozen |
 | `rev_on` | `FAAL_ENABLE_VECTOR_REVERSAL` | 1 | vector-reversal override |
-| `rev_min_dps` | — | 5.0 | absolute speed floor: below this the direction is noise, so no reversal is judged |
 | `rev_angle_rad` | `FAAL_DIR_CHANGE_ANGLE_RAD` | 1.2 | how sharp a turn counts as a reversal (69°); `rev_cos` still wins if present |
 | `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | `\|sin θ\|` gate; a clean 180° reversal is a known miss |
 | `smooth_time_ms` | `FAAL_SMOOTH_TIME_SEC` | 7.5 | only the reversal reference's low-pass |
