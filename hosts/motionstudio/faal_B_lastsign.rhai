@@ -302,10 +302,11 @@ fn process(sample, params) {
             if pl > this.revFloor && speed > this.revFloor {
                 let c = clampv((this.D[0] * yaw + this.D[1] * pitch) / (pl * speed), -1.0, 1.0);
                 if c < this.revCos {
-                    // the reference lags the hand, so require the new motion to be
-                    // a real fraction of it. |sin| was the old gate and it vanishes
-                    // at a clean 180 deg reversal - the exact case this is for.
-                    if speed > this.revMag * pl {
+                    // |sin| gate, the original criterion: it only fires for turns
+                    // between revCos and ~171 deg, so a clean 180 deg reversal is
+                    // missed. Known and accepted trade-off.
+                    let s2 = 1.0 - c * c;
+                    if s2 > 0.0 && sqrt(s2) > this.revMag {
                         K[8] = 1.0;
                         // one trigger per reversal: absorb the new direction so
                         // the lagging reference cannot re-fire every step

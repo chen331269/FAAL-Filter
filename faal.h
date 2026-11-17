@@ -330,8 +330,9 @@ static int check_reversal_3d(const FaalParams *p, float cosAngle,
 	if (cosTheta >= cosAngle)
 		return 0;
 
-	(void)sinTheta;
-	return curLen > p->dirChangeMagRatio * prevLen;
+	/* |sin| gate, the original criterion: turns between cosAngle and ~171 deg
+	 * fire, a clean 180 deg reversal is missed. Known and accepted. */
+	return sinTheta > p->dirChangeMagRatio;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -530,10 +531,8 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 				                        (prevLen * curLen),
 				                        -1.0f, 1.0f);
 				if (cosTheta < ctx->cosAngleRad)
-					/* the reference lags the hand, so require the new motion to be
-					 * a real fraction of it. |sin| was the old gate and it vanishes
-					 * at a clean 180 deg reversal - the exact case this is for. */
-					forceSuppress = curLen > p->dirChangeMagRatio * prevLen;
+					forceSuppress = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f)) >
+					                p->dirChangeMagRatio;
 			}
 		}
 		else
