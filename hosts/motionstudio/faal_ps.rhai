@@ -44,6 +44,19 @@ fn pf(params, shortKey, jsmKey, fallback) {
 //   st : [peak, prevAbs, prevV, still, freeze, hyst, oneEuro]
 //   k  : shared constants, see the layout table in process()
 // Returns [out, peak, prevAbs, prevV, still, freeze, hyst, oneEuro].
+// cos() for the reversal angle. The host exposes exp/sqrt but its cos is not
+// guaranteed, and a missing function aborts every frame, so approximate:
+// 6th-order Taylor on [0, pi/2], mirrored for the rest. Error < 1e-3.
+fn cos_approx(x) {
+    let pi = 3.14159265358979;
+    let a = absv(x);
+    if a > pi { a = pi; }
+    let s = 1.0;
+    if a > 1.5707963267949 { a = pi - a; s = -1.0; }
+    let a2 = a * a;
+    return s * (1.0 - a2 * (0.5 - a2 * (0.0416666667 - a2 * 0.0013888889)));
+}
+
 fn axis(v, dt, st, k) {
     let a = absv(v);
     let peak = st[0];
@@ -161,7 +174,14 @@ fn process(sample, params) {
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
         this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
-        this.revCos = 0.36235775;   // cos(1.2 rad), the tuned JSM reversal angle
+        // an explicit cos wins; otherwise take the angle the profile carries
+        let rc = -2.0;
+        if params.contains("rev_cos") { rc = params["rev_cos"] * 1.0; }
+        this.revCos = if rc > -1.5 {
+            clampv(rc, -1.0, 1.0)
+        } else {
+            clampv(cos_approx(pf(params, "rev_angle_rad", "FAAL_DIR_CHANGE_ANGLE_RAD", 1.2)), -1.0, 1.0)
+        };
 
         // Internal 1 ms clock, same scheme as faal_ref.rhai: the host's tick rate
         // must not decide how the filter advances.
