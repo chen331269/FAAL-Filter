@@ -192,33 +192,17 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 | `dirChangeMagRatio` | 0.3 | 矢量反转的**法向比例阈值**（越大越严苛） |
 | `dirChangeAngleRad` | 1.2 | 矢量反转的**角度阈值**（弧度） |
 
-### 平滑参数（3 个）
+### 平滑参数（已移除）
 
-| 参数 | 默认 | 含义 |
-|---|---|---|
-| `oneEuroFcMin` | 2.0 | *(未使用)*  One Euro 基线截止频率（Hz） |
-| `oneEuroBeta` | 0.08 | *(未使用)*  One Euro 速度反馈系数 |
-| `smoothThreshold` | 0 | *(未使用)*  分层平滑阈值（deg/s）。**0 = 自动推导为 2 × `oneEuroFcMin`**；负值 = 完全不平滑（只做抑制）；正值 = 显式指定 |
-| `speedLpMs` | 30 | 速度低通时间常数（ms）。分层权重和截止频率都读低通后的速度；0 = 关闭 |
+平滑层在 2026-11-15 从库里移除。`oneEuroFcMin`、`oneEuroBeta`、`smoothThreshold`、`speedLpMs` 仍留在 `FaalParams` 里只为 API 兼容，`do_filter()` 不再读它们。
 
-#### 分层平滑（soft tiered）
+原因：抑制和平均不该住在同一个模块里。平滑会把抑制的动作抹圆，还把可感知的延迟加到每一条路径上；而它真正压掉的抖动，在 1 dps / 8 Hz 时只有约 0.06°（40 counts/° 下两三个计数）。
 
-平滑也按 Jibb 的做法分了层：把输入**按大小拆开**，慢的部分进 One Euro，快的部分直接输出。
+当前第 9 步就是 `out = v;`，剩下的只有 `(1 - suppressHyst)` 与冻结窗口。设计经过与当时的测量见 [docs/smoothing.md](docs/smoothing.md)（顶部已标废弃）。
 
-```
-w = clamp((|V| − T1) / (T2 − T1), 0, 1)      T1 = T2/2,  T2 = smoothThreshold
-out = V·w + OneEuro(V·(1−w))
-```
+MotionStudio 侧的两个宿主脚本在 [`hosts/motionstudio/`](hosts/motionstudio/)，那份 README 说明了阶段、参数和校验方式。
 
-拆输入而不是混合输出，是为了保证**总位移守恒**——大动作不会把滤波器状态灌满，也不会丢角度。
-
-权重由**整个向量的速度**决定，两个轴共用同一个 `w` 和同一个截止频率，所以画圆不会变成椭圆。
-
-`oneEuroBeta` 用的是完整向量速度（不是被 `(1−w)` 缩水后的分量），这样"越快越少平滑"在带内仍然成立。
-
-分层平滑的完整原理（含数值示例、为什么拆输入而不是混合输出、为什么两轴共用一个 fc）见 [docs/smoothing.md](docs/smoothing.md)；"一帧输入从进到出经过哪些步骤"见 [docs/pipeline.md](docs/pipeline.md)。
-
-**总共约 13 个可调参数**——相比大多数体感滤波器动辄 30+ 参数，这已经是最精简的配置。
+**实际生效约 13 个可调参数**——相比大多数体感滤波器动辄 30+ 参数，这已经是最精简的配置。
 
 ---
 
