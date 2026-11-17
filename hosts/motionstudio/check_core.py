@@ -23,7 +23,7 @@ import sys
 BASE = pathlib.Path(__file__).resolve().parent
 REFERENCE = "faal_B_lastsign.rhai"
 GUARDED = ["faal_B_lastsign.rhai", "faal_ps.rhai"]
-EXPECTED = "1df46adfc3cc"
+EXPECTED = "2799383b871c"
 
 
 def grab(text: str, name: str) -> str | None:
@@ -56,8 +56,25 @@ def core_hash(text: str) -> str:
     return hashlib.sha1(clean.encode()).hexdigest()[:12]
 
 
+def split_top(text: str) -> list[str]:
+    """Split on commas that are not inside (), [] or {}."""
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return [p for p in parts if p.strip()]
+
+
 def count_items(between: str) -> int:
-    return len([x for x in between.split(",") if x.strip()])
+    return len(split_top(between))
 
 
 def axis_calls(text: str) -> list[str]:
@@ -121,6 +138,12 @@ def structure(text: str) -> list[str]:
     s_idx = [int(x) for x in re.findall(r"\bS\[(\d+)\]", text)]
     if s_idx and max(s_idx) >= total:
         problems.append(f"process reads S[{max(s_idx)}] but this.S has {total} slots")
+    k_arr = re.search(r"this\.K = \[(.*?)\];", text, re.S)
+    if k_arr:
+        kn = count_items(k_arr.group(1))
+        k_idx = [int(x) for x in re.findall(r"k\[(\d+)\]", body)]
+        if k_idx and max(k_idx) >= kn:
+            problems.append(f"axis reads k[{max(k_idx)}] but this.K has {kn} entries")
     return problems
 
 

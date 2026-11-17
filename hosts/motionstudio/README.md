@@ -51,15 +51,16 @@ fallbacks, and `params` accepts either.
 | `fall_ms` | `FAAL_HYST_FALL_TIME` | 65 | how slowly it lets go |
 | `fall_fast_ms` | `FAAL_HYST_FALL_FAST_TIME` | 0 | overrides the low-`hyst` release (0 = 0.446 × `fall_ms`) |
 | `peak_decay_ms` | `FAAL_PEAK_DECAY_TIME` | 65 | peak tracker decay |
-| `drop_sens` | — | 2.4 | drop-rate → suppression gain |
+| `drop_sens` | — | 1.0 | drop-rate → suppression gain |
 | `sign_thr` | `FAAL_SIGN_CHANGE_THR` | 0.5 | deg/s per ms that counts as a crossing |
+| `drop_curve` | — | 1.0 | drop shaping: 1 = linear, 2 = the original quadratic |
 | `freeze_ms` | `FAAL_FREEZE_DURATION_SEC` | 24 | freeze window length |
 | `suppress_thr` | — | 0.45 | `hyst` level that opens the freeze window |
 | `freeze_mul` | — | 0.1 | how much leaks through while frozen |
 | `rev_on` | `FAAL_ENABLE_VECTOR_REVERSAL` | 1 | vector-reversal override |
 | `rev_cos` | — | 0.362 | cos of the reversal angle (1.2 rad = 69°) |
 | `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | minimum \|sin θ\| for a reversal |
-| `drift_thr` / `drift_hold_ms` | `FAAL_DRIFT_HOLD_TIME_SEC` | 0.15 / 200 | stillness that zeroes the axis |
+| `drift_thr` / `drift_hold_ms` | `FAAL_DRIFT_HOLD_TIME_SEC` | 0.35 / 120 | stillness that zeroes the axis, judged on a 60 ms low-pass of the speed (`still_lp_ms`) |
 | `smooth_time_ms` | `FAAL_SMOOTH_TIME_SEC` | 7.5 | only the reversal reference's low-pass |
 
 `FAAL_ONE_EURO_FC_MIN` / `FAAL_ONE_EURO_BETA` are no longer read; delete them
@@ -92,4 +93,4 @@ duplicated in six places (init, the axis calls, both store-backs, both
 returns), and out-of-range indices bypass the whole filter at runtime with a
 single "bypassed" message in the UI.
 
-Current core hash: **`1df46adfc3cc`**.
+Current core hash: **`2799383b871c`**.

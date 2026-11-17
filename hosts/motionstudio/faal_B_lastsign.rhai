@@ -50,9 +50,9 @@ fn pf(params, shortKey, jsmKey, fallback) {
 }
 
 // One axis of the filter.
-//   st : 7-element state [peak, prevAbs, prevV, still, freeze, hyst, oneEuro]
+//   st : 6-element state [peak, |v|, still, freeze, hyst, lastSign]
 //   k  : shared constants, see the layout table in process()
-// Returns [out, peak, prevAbs, prevV, still, freeze, hyst, oneEuro].
+// Returns [out, peak, |v|, still, freeze, hyst, lastSign].
 fn axis(v, dt, st, k) {
     let a = absv(v);
     let peak = st[0];
@@ -76,21 +76,25 @@ fn axis(v, dt, st, k) {
     if a > peak { peak = a; }
     else { peak = peak * exp(-dt / k[4]); }
 
-    // 4) drift hold: long stillness zeroes the axis and its history
+    // 4) drift hold: long stillness zeroes the axis and its history. Stillness is
+    //    judged on the low-passed vector speed (k[14]) so a single noisy sample
+    //    cannot keep resetting the timer.
     let still = st[2];
     if k[5] > 0.0 {
-        if a < k[6] { still = still + dt; }
+        if k[14] < k[6] { still = still + dt; }
         else { still = 0.0; }
         if still >= k[5] {
             return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         }
     }
 
-    // 5) drop-slope suppression (quadratic shaping, curve = 2)
+    // 5) drop-slope suppression: curve 1 = linear, curve 2 = the original
+    //    quadratic. Only these two are implemented (no pow() in the host).
     let raw = 0.0;
     if peak > k[0] {
         let d = clampv(drop * k[7], 0.0, 1.0);
-        raw = d * d;
+        raw = d;
+        if k[13] > 1.5 { raw = d * d; }
     }
 
     // 6) Both change detectors, enabled together, full strength - which is how
@@ -165,24 +169,29 @@ fn process(sample, params) {
         // K layout
         //  0 peak_min        1 rise        2 fastFall    3 fall       4 peak_decay
         //  5 drift_hold      6 drift_thr   7 drop_sens   8 sign_thr   9 freeze
-        // 10 force (per frame)  11 suppress_thr  12 freeze_mul
+        // 10 force (per frame)  11 suppress_thr  12 freeze_mul  13 drop_curve
+        // 14 low-passed vector speed (per frame)
         this.K = [
             pf(params, "peak_min", "", 2.2),
             clampv(pms(params, "rise_ms", "FAAL_HYST_RISE_TIME", 2.9) / 1000.0, 0.0001, 1.0),
             fastFall,
             fall,
             clampv(pms(params, "peak_decay_ms", "FAAL_PEAK_DECAY_TIME", 65.0) / 1000.0, 0.0001, 1.0),
-            clampv(pms(params, "drift_hold_ms", "FAAL_DRIFT_HOLD_TIME_SEC", 200.0) / 1000.0, 0.0, 10.0),
-            clampv(pf(params, "drift_thr", "", 0.15), 0.0, 100.0),
-            pf(params, "drop_sens", "", 2.4),
+            clampv(pms(params, "drift_hold_ms", "FAAL_DRIFT_HOLD_TIME_SEC", 120.0) / 1000.0, 0.0, 10.0),
+            clampv(pf(params, "drift_thr", "", 0.35), 0.0, 100.0),
+            pf(params, "drop_sens", "", 1.0),
             pf(params, "sign_thr", "FAAL_SIGN_CHANGE_THR", 0.5),
             clampv(pms(params, "freeze_ms", "FAAL_FREEZE_DURATION_SEC", 24.0) / 1000.0, 0.0, 1.0),
             0.0,
             pf(params, "suppress_thr", "", 0.45),
             clampv(pf(params, "freeze_mul", "", 0.1), 0.0, 1.0),
+            pf(params, "drop_curve", "", 1.0),
+            0.0,
         ];
 
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
+        this.stillLpMs = clampv(pms(params, "still_lp_ms", "", 60.0) / 1000.0, 0.001, 1.0);
+        this.stillLp = 0.0;
         // The One Euro module (fc_min / beta / speed low-pass) was stripped on
         // 2026-11-15: FAAL now suppresses only, and smoothing is a separate stage.
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
@@ -275,6 +284,10 @@ fn process(sample, params) {
 
         let K = this.K;
         let speed = sqrt(yaw * yaw + pitch * pitch);
+        // stillness is judged on a 60 ms low-pass of the vector speed
+        let la = 1.0 - exp(-step / this.stillLpMs);
+        this.stillLp = this.stillLp + la * (speed - this.stillLp);
+        K[14] = this.stillLp;
         K[10] = 0.0;
 
         // vector reversal, judged before this sample is absorbed
