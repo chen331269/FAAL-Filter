@@ -68,6 +68,7 @@ typedef struct FaalParams
 	/* vector reversal */
 	int   enableVectorReversal;
 	float dirChangeMagRatio;
+	float revMinDps;        /* deg/s floor: below this the direction is noise */
 	float dirChangeAngleRad;
 	float smoothTimeSec;    /* s, memory of the reversal reference */
 
@@ -319,6 +320,8 @@ static int check_reversal_3d(const FaalParams *p, float cosAngle,
 	curLen2 = cx * cx + cy * cy + cz * cz;
 	if (prevLen2 < 1e-12f || curLen2 < 1e-12f)
 		return 0;
+	if (sqrtf(prevLen2) < p->revMinDps || sqrtf(curLen2) < p->revMinDps)
+		return 0;
 
 	prevLen = sqrtf(prevLen2);
 	curLen = sqrtf(curLen2);
@@ -392,6 +395,7 @@ void faal_defaults(FaalParams *out)
 
 	out->enableVectorReversal = 0;
 	out->dirChangeMagRatio = 0.3f;
+	out->revMinDps = 5.0f;
 	out->dirChangeAngleRad = 1.570796f;
 	out->smoothTimeSec = 0.1f;
 
@@ -517,7 +521,8 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 		{
 			float prevLen2 = ctx->dirX * ctx->dirX + ctx->dirY * ctx->dirY;
 			float curLen2 = x * x + y * y;
-			if (prevLen2 > 1e-12f && curLen2 > 1e-12f)
+			if (prevLen2 > 1e-12f && curLen2 > 1e-12f &&
+			    sqrtf(prevLen2) > p->revMinDps && sqrtf(curLen2) > p->revMinDps)
 			{
 				float prevLen = sqrtf(prevLen2);
 				float curLen = sqrtf(curLen2);

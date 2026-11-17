@@ -174,6 +174,7 @@ fn process(sample, params) {
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
         this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
+        this.revFloor = clampv(pf(params, "rev_min_dps", "", 5.0), 0.0, 100.0);
         // an explicit cos wins; otherwise take the angle the profile carries
         let rc = -2.0;
         if params.contains("rev_cos") { rc = params["rev_cos"] * 1.0; }
@@ -327,7 +328,9 @@ fn process(sample, params) {
         let alpha = 1.0 - exp(-step / this.smoothTime);
         if this.revOn > 0.5 {
             let pl = sqrt(this.D[0] * this.D[0] + this.D[1] * this.D[1]);
-            if pl > 0.000001 && speed > 0.000001 {
+            // below a few dps the direction is just noise: without this floor the
+            // detector fires every few ms at rest and each fire arms a freeze
+            if pl > this.revFloor && speed > this.revFloor {
                 let c = clampv((this.D[0] * yaw + this.D[1] * pitch) / (pl * speed), -1.0, 1.0);
                 if c < this.revCos {
                     // the reference lags the hand, so require the new motion to be
