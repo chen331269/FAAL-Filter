@@ -21,8 +21,21 @@ import re
 import sys
 
 BASE = pathlib.Path(__file__).resolve().parent
-REFERENCE = "faal_B_lastsign.rhai"
-GUARDED = ["faal_B_lastsign.rhai", "faal_B_rev_mag.rhai", "faal_ps.rhai"]
+PREFIXES = ["faal_B_lastsign", "faal_B_rev_mag", "faal_ps"]
+
+
+def newest(prefix: str) -> str | None:
+    """Highest _vN file for a prefix, so bumping the version never breaks this."""
+    found = []
+    for path in BASE.glob(prefix + "_v*.rhai"):
+        m = re.search(r"_v(\d+)\.rhai$", path.name)
+        if m:
+            found.append((int(m.group(1)), path.name))
+    return max(found)[1] if found else None
+
+
+REFERENCE = newest("faal_B_lastsign")
+GUARDED = [n for n in (newest(p) for p in PREFIXES) if n]
 EXPECTED = "62cbf6919484"
 
 

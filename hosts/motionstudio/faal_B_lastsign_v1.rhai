@@ -1,21 +1,29 @@
-// FAAL for MotionStudio — raw_gyro stage, player-space filter (PS_MOTION path).
+// faal_B_lastsign_v1.rhai - v1 - 2026-11-18 - mainline, before_builtin 2D
+// axis hash: 62cbf6919484   (bump the _vN in the file name on every change)
+
+
+
+
+
+
+// FAAL — reference translation for MotionStudio, before_builtin stage (api_version 1)
 //
-// JoyShockMapper's PS_MOTION path does not filter device axes. It derives the
-// gravity-referenced player-space pair, filters that pair, and then rebuilds a
-// 3D vector. This script follows the same path:
+// This file is the canonical translation: JoyShockMapper's 2D filter path,
+// nothing added. Every version that does player-space work should reuse this
+// core unchanged.
 //
-//   1. up    = vertical, taken from the accelerometer
-//   2. fwd   = device forward (X) projected onto the horizontal plane
-//   3. right = up x fwd
-//   4. yaw = g·up,  pitch = g·right,  roll = g·fwd
-//   5. filter yaw and pitch with the FAAL core
-//   6. out = yaw'·up + pitch'·right + roll·fwd
+// Placement: "内置滤波之前" (before_builtin) - the stage already supplies the
+// horizontal / vertical aim rates with z = 0, exactly what JSM's 2D path filters.
 //
-// Because the basis is derived from gravity instead of assumed axis roles, it
-// works no matter how the device's axes are oriented, and the forward mesh keeps
-// its direction: only the filtered components change.
+// Budget
+//   The engine allows 4096 Rhai operations per sensor sample for the whole chain
+//   and 5 ms of wall clock. Building maps or re-reading ~20 params on every frame
+//   exceeds that and the instance gets bypassed, so everything is read once on
+//   the first call (MotionStudio recreates the instance whenever params change)
+//   and the per-sample path is a fixed sequence of array accesses and arithmetic.
 //
-// dt is used exactly as delivered (no merging, no flooring).
+// State
+//   Arrays instead of many named fields: fewer nodes, fewer operations per access.
 
 fn clampv(v, lo, hi) {
     if v < lo { return lo; }
@@ -28,6 +36,9 @@ fn absv(v) {
     return v;
 }
 
+// Parameter lookup that accepts both spellings used in this project:
+// short names in ms ("rise_ms") and JSM names in s ("FAAL_HYST_RISE_TIME").
+// Only called during init, never per sample.
 fn pms(params, shortKey, jsmKey, fallbackMs) {
     if shortKey != "" && params.contains(shortKey) { return params[shortKey] * 1.0; }
     if jsmKey != "" && params.contains(jsmKey) { return params[jsmKey] * 1000.0; }
@@ -40,10 +51,10 @@ fn pf(params, shortKey, jsmKey, fallback) {
     return fallback;
 }
 
-// One axis of the FAAL core.
-//   st : [peak, prevAbs, prevV, still, freeze, hyst, oneEuro]
+// One axis of the filter.
+//   st : 5-element state [peak, |v|, freeze, hyst, lastSign]
 //   k  : shared constants, see the layout table in process()
-// Returns [out, peak, prevAbs, prevV, still, freeze, hyst, oneEuro].
+// Returns [out, peak, |v|, freeze, hyst, lastSign].
 // cos() for the reversal angle. The host exposes exp/sqrt but its cos is not
 // guaranteed, and a missing function aborts every frame, so approximate:
 // 6th-order Taylor on [0, pi/2], mirrored for the rest. Error < 1e-3.
@@ -141,21 +152,31 @@ fn axis(v, dt, st, k) {
 }
 
 fn process(sample, params) {
+    // ------------------------------------------------------------------ init
     if !this.contains("ok") {
         this.ok = true;
-        this.S = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        this.G = [0.0, 0.0, 0.0];
+
+        // per-axis state, 5 values each
+        this.S = [0.0, 0.0, 0.0, 0.0, 0.0,
+                  0.0, 0.0, 0.0, 0.0, 0.0];
+        // reversal reference
         this.D = [0.0, 0.0];
-        this.gOk = false;
+        // duplicate-report accumulator
+        this.acc = 0.0;
+        // last input/output, for duplicate merging
+        this.lx = 1e9;
+        this.ly = 1e9;
+        this.lz = 1e9;
+        this.lout = [0.0, 0.0, 0.0];
 
         let fall = clampv(pms(params, "fall_ms", "FAAL_HYST_FALL_TIME", 65.0) / 1000.0, 0.0001, 1.0);
         let ff = pms(params, "fall_fast_ms", "FAAL_HYST_FALL_FAST_TIME", 0.0);
         let fastFall = fall * 0.446;
         if ff > 0.0 { fastFall = clampv(ff / 1000.0, 0.0001, fall); }
 
-        // 0 peak_min | 1 rise | 2 fastFall | 3 fall | 4 peak_decay
-        // 5 drop_sens | 6 sign_thr | 7 freeze | 8 force | 9 suppress_thr
-        // 10 freeze_mul | 11 drop_curve
+        // K layout
+        //  0 peak_min        1 rise        2 fastFall    3 fall       4 peak_decay
+        //  5 drop_sens      6 sign_thr    7 freeze      8 force (per frame)
         this.K = [
             pf(params, "peak_min", "", 2.2),
             clampv(pms(params, "rise_ms", "FAAL_HYST_RISE_TIME", 2.9) / 1000.0, 0.0001, 1.0),
@@ -168,12 +189,13 @@ fn process(sample, params) {
             0.0,
             pf(params, "suppress_thr", "", 0.45),
             clampv(pf(params, "freeze_mul", "", 0.1), 0.0, 1.0),
-            pf(params, "drop_curve", "", 2.0)
+            pf(params, "drop_curve", "", 2.0),
         ];
 
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
+        // The One Euro module (fc_min / beta / speed low-pass) was stripped on
+        // 2026-11-15: FAAL now suppresses only, and smoothing is a separate stage.
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
-        this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
         // an explicit cos wins; otherwise take the angle the profile carries
         let rc = -2.0;
         if params.contains("rev_cos") { rc = params["rev_cos"] * 1.0; }
@@ -182,10 +204,12 @@ fn process(sample, params) {
         } else {
             clampv(cos_approx(pf(params, "rev_angle_rad", "FAAL_DIR_CHANGE_ANGLE_RAD", 1.2)), -1.0, 1.0)
         };
-
-        // Internal 1 ms clock, same scheme as faal_ref.rhai: the host's tick rate
-        // must not decide how the filter advances.
-        this.acc = 0.0;
+        this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
+        this.dedup = pf(params, "dedup", "", 1.0);
+        this.dtFloor = pms(params, "dt_floor_ms", "", 0.05) / 1000.0;
+        if this.dtFloor <= 0.0 { this.dtFloor = 0.00005; }
+        // Real report interval. report_ms > 0 pins it; otherwise it is estimated
+        // from the gaps the host reports between genuinely new readings.
         this.report = clampv(pms(params, "report_ms", "", 0.0) / 1000.0, 0.0, 0.05);
         this.period = 0.0;
         // Worst case per sample decides whether the whole chain fits the host's
@@ -194,21 +218,24 @@ fn process(sample, params) {
         this.maxSteps = pf(params, "max_steps", "", 1.0);
         if this.maxSteps < 1.0 { this.maxSteps = 1.0; }
         if this.maxSteps > 8.0 { this.maxSteps = 8.0; }
-        this.lx = 1e9;
-        this.ly = 1e9;
-        this.lz = 1e9;
-        this.lout = [0.0, 0.0, 0.0];
     }
 
-    let ix = sample.x;
-    let iy = sample.y;
-    let iz = sample.z;
-
-    // Repeated reports carry no time of their own: hold instead of re-filtering,
-    // or the derivative terms read zero on most ticks and spike on the one that
-    // changed. Judged by value, not by dt, because an event-timestamp host can
-    // hand a genuinely new reading a zero dt.
-    if ix == this.lx && iy == this.ly && iz == this.lz {
+    // -------------------------------------------------------------- per sample
+    //
+    // The filter keeps its own clock. Incoming dt is accumulated and spent in
+    // whole milliseconds, so the host's tick rate decides only how fresh the input
+    // is - never how the filter advances. JoyShockMapper gets this for free by
+    // polling at a fixed rate; this gives the same guarantee without the host's
+    // cooperation, which is what makes the tuned time constants hold on any engine
+    // rate.
+    //
+    // It pairs with the sensor timestamp option: that one supplies an accurate dt
+    // (including dt = 0 for repeated reports), and this turns those chunks into a
+    // steady 1 ms cadence instead of one big irregular step.
+    // Advance only on a genuinely new reading. Repeated reports carry no time of
+    // their own, and a host that repeats a nonzero dt for them must not be able to
+    // run the filter clock fast.
+    if sample.x == this.lx && sample.y == this.ly && sample.z == this.lz {
         return this.lout;
     }
 
@@ -216,13 +243,14 @@ fn process(sample, params) {
     if dt < 0.0 { dt = 0.0; }
     if dt > 0.05 { dt = 0.05; }
 
-    // A pinned interval wins; otherwise estimate it from the gaps between new
-    // readings, so a jittery host clock still advances by the true average period.
+    // A pinned interval wins; otherwise estimate it, so a jittery host clock still
+    // advances the filter by the true average period.
     if this.report > 0.0 {
         dt = this.report;
     } else if dt > 0.0 {
         if this.period <= 0.0 { this.period = dt; }
         else if dt > this.period * 3.0 || dt < this.period * 0.34 {
+            // A real gap or a fresh rate: follow it rather than lag.
             this.period = dt;
         } else {
             this.period = this.period + 0.2 * (dt - this.period);
@@ -235,83 +263,24 @@ fn process(sample, params) {
         return this.lout;
     }
 
-    // ---- gravity, low-passed so the basis does not jitter ----
-    if sample.accel_fresh {
-        let kg = 1.0 - exp(-dt / 0.15);
-        let G = this.G;
-        G[0] = G[0] + kg * (sample.accel_x - G[0]);
-        G[1] = G[1] + kg * (sample.accel_y - G[1]);
-        G[2] = G[2] + kg * (sample.accel_z - G[2]);
-        this.G = G;
-        let gl = sqrt(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]);
-        if gl > 1e-6 { this.gOk = true; }
+    // Axis mapping per stage. raw_gyro is canonical X forward / Y right / Z down,
+    // so yaw is Z and pitch is Y. The aiming stages already are yaw / pitch.
+    let three = sample.components > 2;
+    let roll = 0.0;
+    let yaw = sample.x;
+    let pitch = sample.y;
+    if three {
+        roll = sample.x;
+        pitch = sample.y;
+        yaw = sample.z;
     }
 
-    // ---- player-space pair ----
-    let yaw = ix;
-    let pitch = iy;
-    let roll = iz;
-    let ux = 0.0; let uy = 0.0; let uz = 1.0;
-    let fx = 1.0; let fy = 0.0; let fz = 0.0;
-    let rx = 0.0; let ry = 1.0; let rz = 0.0;
-    let usedSpace = false;
-
-    if this.gOk {
-        let G = this.G;
-        let gl = sqrt(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]);
-        if gl > 1e-6 {
-            // accelerometers read roughly (0, 0, -1) at rest, so "up" is -accel
-            ux = -G[0] / gl;
-            uy = -G[1] / gl;
-            uz = -G[2] / gl;
-
-            // forward = device X with its vertical part removed
-            let ax2 = 1.0 - ux * ux;
-            let ay2 = -ux * uy;
-            let az2 = -ux * uz;
-            let fl = sqrt(ax2 * ax2 + ay2 * ay2 + az2 * az2);
-            if fl > 1e-6 {
-                fx = ax2 / fl;
-                fy = ay2 / fl;
-                fz = az2 / fl;
-
-                // right = up x forward
-                rx = uy * fz - uz * fy;
-                ry = uz * fx - ux * fz;
-                rz = ux * fy - uy * fx;
-                let rl = sqrt(rx * rx + ry * ry + rz * rz);
-                if rl > 1e-6 {
-                    rx = rx / rl;
-                    ry = ry / rl;
-                    rz = rz / rl;
-
-                    // horizontal intent: the gravity-aligned component, capped by
-                    // the whole (up, forward) planar magnitude so a tilted device'
-                    // roll share still contributes - exactly JSM's
-                    //   yaw = sign(w) * min(|w| * 2, sqrt(w^2 + f^2))
-                    let wv = ix * ux + iy * uy + iz * uz;
-                    let hv = ix * fx + iy * fy + iz * fz;
-                    let planar = sqrt(wv * wv + hv * hv);
-                    let sgn = 1.0;
-                    if wv < 0.0 { sgn = -1.0; }
-                    let aw = absv(wv) * 2.0;
-                    yaw = sgn * (if aw < planar { aw } else { planar });
-                    pitch = ix * rx + iy * ry + iz * rz;
-                    roll = hv;
-                    usedSpace = true;
-                }
-            }
-        }
-    }
-
-    // ---- FAAL on the player-space pair, in whole 1 ms steps ----
-    let speed = sqrt(yaw * yaw + pitch * pitch);
-
-    let fyaw = this.lout[0];
-    let fpitch = this.lout[1];
-    let froll = this.lout[2];
+    let oyaw = this.lout[0];
+    let opitch = this.lout[1];
     let steps = 0;
 
+    // Four 1 ms steps cover a 250 Hz pad report; six leaves headroom for a slower
+    // pad without risking the per-sample operation budget.
     while this.acc >= 0.001 && steps < this.maxSteps {
         // Spend it in one step when the remaining steps could not cover it: the
         // per-sample operation budget is finite and an overrun bypasses the whole
@@ -322,8 +291,10 @@ fn process(sample, params) {
         steps = steps + 1;
 
         let K = this.K;
+        let speed = sqrt(yaw * yaw + pitch * pitch);
         K[8] = 0.0;
 
+        // vector reversal, judged before this sample is absorbed
         let alpha = 1.0 - exp(-step / this.smoothTime);
         if this.revOn > 0.5 {
             let pl = sqrt(this.D[0] * this.D[0] + this.D[1] * this.D[1]);
@@ -342,58 +313,29 @@ fn process(sample, params) {
         this.K = K;
 
         let S = this.S;
-        let sy = axis(yaw, step, [S[0], S[1], S[2], S[3], S[4]], K);
-        let sp = axis(pitch, step, [S[5], S[6], S[7], S[8], S[9]], K);
+        let rx = axis(yaw, step, [S[0], S[1], S[2], S[3], S[4]], K);
+        let ry = axis(pitch, step, [S[5], S[6], S[7], S[8], S[9]], K);
 
-        let sz0 = this.lout[2];
-        if !usedSpace {
-            // No usable gravity. Filter the third device axis too, so the
-            // horizontal one cannot slip through untouched.
-            let sz = axis(iz, step, [S[10], S[11], S[12], S[13], S[14]], K);
-            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5],
-                      sp[1], sp[2], sp[3], sp[4], sp[5],
-                      sz[1], sz[2], sz[3], sz[4], sz[5]];
-            sz0 = sz[0];
-        } else {
-            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5],
-                      sp[1], sp[2], sp[3], sp[4], sp[5],
-                      S[10], S[11], S[12], S[13], S[14]];
-        }
+        this.S = [rx[1], rx[2], rx[3], rx[4], rx[5],
+                  ry[1], ry[2], ry[3], ry[4], ry[5]];
 
-        fyaw = sy[0];
-        fpitch = sp[0];
-        froll = sz0;
-        if fyaw != fyaw || fpitch != fpitch {
+        oyaw = rx[0];
+        opitch = ry[0];
+        if oyaw != oyaw || opitch != opitch {
             this.ok = false;
             return [sample.x, sample.y, sample.z];
         }
     }
 
-    this.lx = ix;
-    this.ly = iy;
-    this.lz = iz;
+    this.lx = sample.x;
+    this.ly = sample.y;
+    this.lz = sample.z;
 
-    if !usedSpace {
-        this.lout = [fyaw, fpitch, froll];
-        return this.lout;
+    if three {
+        // keep roll untouched, return pitch on Y and yaw on Z as the stage expects
+        this.lout = [roll, opitch, oyaw];
+    } else {
+        this.lout = [oyaw, opitch, sample.z];
     }
-
-    // ---- PLAYER mode: scale the original vector, do not rewrite its direction ----
-    // JSM scales both turn axes by the yaw ratio and the pitch axis by the pitch
-    // ratio. Here the turn pair is (up, forward), which is why the forward share
-    // is scaled too: that is the roll contribution the horizontal intent borrowed.
-    let kYaw = 1.0;
-    let kPitch = 1.0;
-    if absv(yaw) > 0.001 { kYaw = clampv(fyaw / yaw, 0.0, 1.0); }
-    if absv(pitch) > 0.001 { kPitch = clampv(fpitch / pitch, 0.0, 1.0); }
-
-    let wv = ix * ux + iy * uy + iz * uz;
-    let hv = ix * fx + iy * fy + iz * fz;
-    let pv2 = ix * rx + iy * ry + iz * rz;
-    this.lout = [
-        (wv * kYaw) * ux + (pv2 * kPitch) * rx + (hv * kYaw) * fx,
-        (wv * kYaw) * uy + (pv2 * kPitch) * ry + (hv * kYaw) * fy,
-        (wv * kYaw) * uz + (pv2 * kPitch) * rz + (hv * kYaw) * fz
-    ];
     return this.lout;
 }

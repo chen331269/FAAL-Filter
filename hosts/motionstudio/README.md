@@ -8,10 +8,10 @@ algorithm, ported to the engine's 1 ms internal clock.
 
 | File | Stage | Use |
 |---|---|---|
-| `faal_B_lastsign.rhai` | `before_builtin` (2D) | the mainline: turn/pitch pair, projected by the host |
-| `faal_ps.rhai` | `raw_gyro` (3D) | player-space path with its own gravity estimate and PLAYER gain |
+| `faal_B_lastsign_v1.rhai` | `before_builtin` (2D) | the mainline: turn/pitch pair, projected by the host |
+| `faal_ps_v1.rhai` | `raw_gyro` (3D) | player-space path with its own gravity estimate and PLAYER gain |
 
-Only one of them belongs in a profile at a time. `faal_B_lastsign.rhai` is the
+Only one of them belongs in a profile at a time. `faal_B_lastsign_v1.rhai` is the
 one that has been through the most real play.
 
 ## What the filter does now
@@ -75,15 +75,15 @@ the profile with `inject.pl` while MotionStudio is closed (it also mirrors
 `.bak` and keeps a timestamped rollback):
 
 ```
-perl inject.pl faal_B_lastsign.rhai
-perl inject.pl faal_B_lastsign.rhai --only 0   # default layer only
-perl inject.pl faal_B_lastsign.rhai --dry
+perl inject.pl faal_B_lastsign_v1.rhai
+perl inject.pl faal_B_lastsign_v1.rhai --only 0   # default layer only
+perl inject.pl faal_B_lastsign_v1.rhai --dry
 ```
 
 ## Keeping the two copies in step
 
 `axis()` must be byte-identical in both scripts (comments and whitespace
-stripped). Edit it in `faal_B_lastsign.rhai`, then:
+stripped). Edit it in `faal_B_lastsign_v1.rhai`, then:
 
 ```
 python check_core.py --sync   # copies axis() across
@@ -96,3 +96,11 @@ returns), and out-of-range indices bypass the whole filter at runtime with a
 single "bypassed" message in the UI.
 
 Current core hash: **`62cbf6919484`**.
+
+## Versioning
+
+Every change bumps `_vN` in the file name, so the script you imported can be
+identified at a glance: `faal_B_lastsign_v3.rhai` is newer than `_v2`. The first
+two lines of each file repeat the version, the date and the current `axis()`
+hash. `check_core.py` resolves the highest `_vN` per prefix, so a bump never
+needs a code change here.
