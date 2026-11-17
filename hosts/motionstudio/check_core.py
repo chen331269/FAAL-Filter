@@ -23,7 +23,7 @@ import sys
 BASE = pathlib.Path(__file__).resolve().parent
 REFERENCE = "faal_B_lastsign.rhai"
 GUARDED = ["faal_B_lastsign.rhai", "faal_ps.rhai"]
-EXPECTED = "e1316ace9264"
+EXPECTED = "72e81ae53c71"
 
 
 def grab(text: str, name: str) -> str | None:

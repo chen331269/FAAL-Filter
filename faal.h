@@ -301,12 +301,15 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 
 	if (p->freezeDurationSec > 0.0f)
 	{
-		/* Only an event arms the freeze: the drop level is continuous, so
-		 * arming on hyst alone clamps every deceleration. */
+		/* Only an event starts the freeze: the drop level is continuous, so
+		 * arming on hyst alone clamps every deceleration. Once it is running,
+		 * hyst keeps extending it, so a deeper suppression delays the release. */
 		if (event && st->suppressHyst > p->suppressThr)
 			st->freezeRemainingSec = p->freezeDurationSec;
 		if (st->freezeRemainingSec > 0.0f)
 		{
+			if (st->suppressHyst > p->suppressThr)
+				st->freezeRemainingSec = p->freezeDurationSec;
 			out *= p->freezeOutMul;
 			st->freezeRemainingSec -= dt;
 			if (st->freezeRemainingSec < 0.0f)

@@ -120,13 +120,15 @@ fn axis(v, dt, st, k) {
     //    One Euro module used to live here; it was stripped out on 2026-11-15
     let out = v * (1.0 - hyst);
 
-    // 10) freeze window: only a sign crossing or a vector reversal arms it - drop
-    //     must not, because drop is a continuous level and would clamp every
-    //     deceleration. Once armed it holds for freeze_ms and scales the leak.
+    // 10) freeze window. Only a crossing or a reversal may *start* it - drop is a
+    //     continuous level and must not clamp every deceleration. But once it is
+    //     running, hyst keeps extending it, so a deeper or longer suppression
+    //     (drop included) delays the release by keeping hyst above the threshold.
     let frz = st[3];
     if k[9] > 0.0 {
         if event && hyst > k[11] { frz = k[9]; }
         if frz > 0.0 {
+            if hyst > k[11] { frz = k[9]; }
             out = out * k[12];
             frz = frz - dt;
             if frz < 0.0 { frz = 0.0; }
