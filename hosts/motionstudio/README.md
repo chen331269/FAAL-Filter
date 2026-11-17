@@ -104,3 +104,46 @@ identified at a glance: `faal_B_lastsign_v3.rhai` is newer than `_v2`. The first
 two lines of each file repeat the version, the date and the current `axis()`
 hash. `check_core.py` resolves the highest `_vN` per prefix, so a bump never
 needs a code change here.
+
+## Milestone: v4 (2026-11-18)
+
+`faal_B_rev_mag_v4.rhai` is the first version that felt right in play. Its
+vector detector does three things at once, and that combination is the whole
+point:
+
+* it compares the current velocity with a 7.5 ms low-passed reference direction;
+* when the angle clears `rev_angle_rad` and the perpendicular part clears
+  `rev_mag`, it forces `hyst = 1` and pulls the reference onto the new direction,
+  so one reversal yields exactly one trigger;
+* because an incoherent direction (rest noise) trips it constantly while a
+  coherent one (a slow micro-adjustment, a circle) does not, it doubles as a
+  *smart dead zone*: the crosshair pins by itself, yet nothing intentional is
+  eaten.
+
+Two modes are chosen once at init from `sign_thr`:
+
+| `sign_thr` | gate | who owns a clean 180 deg reversal |
+|---|---|---|
+| > 0 | `\|sin θ\| > rev_mag` | the sign detector; this one only reinforces |
+| 0 | `\|v\| > rev_mag × \|ref\|` | this one |
+
+With `sign_thr = 0` the freeze is additionally gated: a trigger whose reference
+is slower than `rev_freeze_dps` only dips, it does not arm the 24 ms window.
+
+### Shipped parameters (three layers)
+
+| Parameter | default | ADS layer | third layer |
+|---|---|---|---|
+| `FAAL_DIR_CHANGE_ANGLE_RAD` | 0.9 | 0.9 | 0.9 |
+| `FAAL_DIR_CHANGE_MAG_RATIO` | 0.05 | 0.05 | 0.05 |
+| `FAAL_SIGN_CHANGE_THR` | 0.5 | 0 | 0 |
+| `FAAL_ENABLE_VECTOR_REVERSAL` | 1 | 1 | 0 |
+| `FAAL_DROP_SENSITIVITY` | 1.0 | 1.0 | 2.4 |
+| `drop_curve` | 1.0 | 1.0 | 2.0 |
+| `rev_freeze_dps` | 90 | 90 | — |
+| `FAAL_FREEZE_DURATION_SEC` | 0.024 | 0.024 | 0.024 |
+| `freeze_mul` | 0.1 | 0.1 | 0.1 |
+| `FAAL_HYST_RISE_TIME` | 0.0029 | 0.0029 | 0.0029 |
+| `FAAL_HYST_FALL_TIME` | 0.065 | 0.065 | 0.065 |
+| `FAAL_PEAK_DECAY_TIME` | 0.065 | 0.065 | 0.065 |
+
