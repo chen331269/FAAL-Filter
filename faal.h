@@ -227,21 +227,6 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 	else
 		st->peakValue *= expf(-dt / p->peakDecayTime);
 
-	/* 4) drift hold */
-	if (p->enableDriftHold && p->driftHoldTimeSec > 0.0f)
-	{
-		if (absV < p->driftThreshold)
-			st->stillTimeSec += dt;
-		else
-			st->stillTimeSec = 0.0f;
-
-		if (st->stillTimeSec >= p->driftHoldTimeSec)
-		{
-			axis_reset(st);
-			return 0.0f;
-		}
-	}
-
 	/* 5) drop-slope suppression */
 	if (st->peakValue > p->peakMinTrigger)
 	{
@@ -342,8 +327,8 @@ static int check_reversal_3d(const FaalParams *p, float cosAngle,
 	if (cosTheta >= cosAngle)
 		return 0;
 
-	sinTheta = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f));
-	return sinTheta > p->dirChangeMagRatio;
+	(void)sinTheta;
+	return curLen > p->dirChangeMagRatio * prevLen;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -534,12 +519,16 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 			float curLen2 = x * x + y * y;
 			if (prevLen2 > 1e-12f && curLen2 > 1e-12f)
 			{
+				float prevLen = sqrtf(prevLen2);
+				float curLen = sqrtf(curLen2);
 				float cosTheta = clampf((ctx->dirX * x + ctx->dirY * y) /
-				                        (sqrtf(prevLen2) * sqrtf(curLen2)),
+				                        (prevLen * curLen),
 				                        -1.0f, 1.0f);
 				if (cosTheta < ctx->cosAngleRad)
-					forceSuppress = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f)) >
-					                p->dirChangeMagRatio;
+					/* the reference lags the hand, so require the new motion to be
+					 * a real fraction of it. |sin| was the old gate and it vanishes
+					 * at a clean 180 deg reversal - the exact case this is for. */
+					forceSuppress = curLen > p->dirChangeMagRatio * prevLen;
 			}
 		}
 		else
@@ -548,10 +537,22 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 		}
 	}
 
-	ctx->dirX += alpha * (x - ctx->dirX);
-	ctx->dirY += alpha * (y - ctx->dirY);
-	if (dim == 3)
-		ctx->dirZ += alpha * (z - ctx->dirZ);
+	if (forceSuppress)
+	{
+		/* One trigger per reversal: absorb the new direction at once, otherwise
+		 * the lagging reference keeps re-firing for the whole smooth time. */
+		ctx->dirX = x;
+		ctx->dirY = y;
+		if (dim == 3)
+			ctx->dirZ = z;
+	}
+	else
+	{
+		ctx->dirX += alpha * (x - ctx->dirX);
+		ctx->dirY += alpha * (y - ctx->dirY);
+		if (dim == 3)
+			ctx->dirZ += alpha * (z - ctx->dirZ);
+	}
 
 	if (dim == 2)
 		speed = sqrtf(x * x + y * y);

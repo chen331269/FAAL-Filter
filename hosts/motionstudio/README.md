@@ -23,7 +23,7 @@ See the repo README for why.
 Per axis, six state values are carried:
 
 ```
-[peak, |v|, still, freeze, hyst, lastSign]
+[peak, |v|, freeze, hyst, lastSign]
 ```
 
 and the output is
@@ -62,8 +62,7 @@ fallbacks, and `params` accepts either.
 | `freeze_mul` | — | 0.1 | how much leaks through while frozen |
 | `rev_on` | `FAAL_ENABLE_VECTOR_REVERSAL` | 1 | vector-reversal override |
 | `rev_cos` | — | 0.362 | cos of the reversal angle (1.2 rad = 69°) |
-| `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | minimum \|sin θ\| for a reversal |
-| `drift_thr` / `drift_hold_ms` | `FAAL_DRIFT_HOLD_TIME_SEC` | 0.15 / 200 | desk-rest killer: sustained near-zero speed zeroes the axis. Judged on a 60 ms low-pass (`still_lp_ms`) so a noisy sample cannot reset the timer |
+| `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | a reversal needs the new speed to be at least this fraction of the lagging reference |
 | `smooth_time_ms` | `FAAL_SMOOTH_TIME_SEC` | 7.5 | only the reversal reference's low-pass |
 
 `FAAL_ONE_EURO_FC_MIN` / `FAAL_ONE_EURO_BETA` are no longer read; delete them
@@ -96,4 +95,4 @@ duplicated in six places (init, the axis calls, both store-backs, both
 returns), and out-of-range indices bypass the whole filter at runtime with a
 single "bypassed" message in the UI.
 
-Current core hash: **`72e81ae53c71`**.
+Current core hash: **`62cbf6919484`**.

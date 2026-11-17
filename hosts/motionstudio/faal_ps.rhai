@@ -47,7 +47,7 @@ fn pf(params, shortKey, jsmKey, fallback) {
 fn axis(v, dt, st, k) {
     let a = absv(v);
     let peak = st[0];
-    let lastSign = st[5];
+    let lastSign = st[4];
 
     // 1) drop rate, normalised to 1 kHz and to the current peak
     let drop = 0.0;
@@ -60,32 +60,21 @@ fn axis(v, dt, st, k) {
     let rise = 1.0 - exp(-dt / k[1]);
     let fast = 1.0 - exp(-dt / k[2]);
     let slow = 1.0 - exp(-dt / k[3]);
-    let hyst = st[4];
+    let hyst = st[3];
     let fall = clampv(fast + (slow - fast) * hyst, 0.0, 1.0);
 
     // 3) peak tracking
     if a > peak { peak = a; }
     else { peak = peak * exp(-dt / k[4]); }
 
-    // 4) drift hold: long stillness zeroes the axis and its history. Stillness is
-    //    judged on the low-passed vector speed (k[14]) so a single noisy sample
-    //    cannot keep resetting the timer.
-    let still = st[2];
-    if k[5] > 0.0 {
-        if k[14] < k[6] { still = still + dt; }
-        else { still = 0.0; }
-        if still >= k[5] {
-            return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        }
-    }
 
     // 5) drop-slope suppression: curve 1 = linear, curve 2 = the original
     //    quadratic. Only these two are implemented (no pow() in the host).
     let raw = 0.0;
     if peak > k[0] {
-        let d = clampv(drop * k[7], 0.0, 1.0);
+        let d = clampv(drop * k[5], 0.0, 1.0);
         raw = d;
-        if k[13] > 1.5 { raw = d * d; }
+        if k[11] > 1.5 { raw = d * d; }
     }
 
     // 6) Both change detectors, enabled together, full strength - which is how
@@ -96,16 +85,16 @@ fn axis(v, dt, st, k) {
     // on zero is no longer swallowed, which removes the one-sided trigger
     // asymmetry on repeated strokes.
     let event = false;
-    if k[8] > 0.0 && peak > k[0] && absv(v) > 0.000001 {
+    if k[6] > 0.0 && peak > k[0] && absv(v) > 0.000001 {
         if absv(lastSign) > 0.000001 && ((v < 0.0) != (lastSign < 0.0)) {
-            if absv(v - lastSign) / (dt * 1000.0) > k[8] { raw = 1.0; hyst = 1.0; event = true; }
+            if absv(v - lastSign) / (dt * 1000.0) > k[6] { raw = 1.0; hyst = 1.0; event = true; }
         }
         lastSign = v;
     }
     // (duplicate one-liner removed: the same override is applied below)
 
     // 7) vector-reversal override (flag prepared by the caller)
-    if k[10] > 0.5 {
+    if k[8] > 0.5 {
         raw = 1.0;
         hyst = 1.0;
         event = true;
@@ -124,24 +113,24 @@ fn axis(v, dt, st, k) {
     //     continuous level and must not clamp every deceleration. But once it is
     //     running, hyst keeps extending it, so a deeper or longer suppression
     //     (drop included) delays the release by keeping hyst above the threshold.
-    let frz = st[3];
-    if k[9] > 0.0 {
-        if event && hyst > k[11] { frz = k[9]; }
+    let frz = st[2];
+    if k[7] > 0.0 {
+        if event && hyst > k[9] { frz = k[7]; }
         if frz > 0.0 {
-            if hyst > k[11] { frz = k[9]; }
-            out = out * k[12];
+            if hyst > k[9] { frz = k[7]; }
+            out = out * k[10];
             frz = frz - dt;
             if frz < 0.0 { frz = 0.0; }
         }
     }
 
-    return [out, peak, a, still, frz, hyst, lastSign];
+    return [out, peak, a, frz, hyst, lastSign];
 }
 
 fn process(sample, params) {
     if !this.contains("ok") {
         this.ok = true;
-        this.S = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        this.S = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         this.G = [0.0, 0.0, 0.0];
         this.D = [0.0, 0.0];
         this.gOk = false;
@@ -152,31 +141,24 @@ fn process(sample, params) {
         if ff > 0.0 { fastFall = clampv(ff / 1000.0, 0.0001, fall); }
 
         // 0 peak_min | 1 rise | 2 fastFall | 3 fall | 4 peak_decay
-        // 5 drift_hold | 6 drift_thr | 7 drop_sens | 8 sign_thr | 9 freeze
-        // 10 force | 11 suppress_thr | 12 freeze_mul | 13 drop_curve
+        // 5 drop_sens | 6 sign_thr | 7 freeze | 8 force | 9 suppress_thr
+        // 10 freeze_mul | 11 drop_curve
         this.K = [
             pf(params, "peak_min", "", 2.2),
             clampv(pms(params, "rise_ms", "FAAL_HYST_RISE_TIME", 2.9) / 1000.0, 0.0001, 1.0),
             fastFall,
             fall,
             clampv(pms(params, "peak_decay_ms", "FAAL_PEAK_DECAY_TIME", 65.0) / 1000.0, 0.0001, 1.0),
-            clampv(pms(params, "drift_hold_ms", "FAAL_DRIFT_HOLD_TIME_SEC", 200.0) / 1000.0, 0.0, 10.0),
-            clampv(pf(params, "drift_thr", "", 0.15), 0.0, 100.0),
             pf(params, "drop_sens", "FAAL_DROP_SENSITIVITY", 2.4),
             pf(params, "sign_thr", "FAAL_SIGN_CHANGE_THR", 0.5),
             clampv(pms(params, "freeze_ms", "FAAL_FREEZE_DURATION_SEC", 24.0) / 1000.0, 0.0, 1.0),
             0.0,
             pf(params, "suppress_thr", "", 0.45),
             clampv(pf(params, "freeze_mul", "", 0.1), 0.0, 1.0),
-            pf(params, "drop_curve", "", 2.0),
-            0.0,
+            pf(params, "drop_curve", "", 2.0)
         ];
 
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
-        this.stillLpMs = clampv(pms(params, "still_lp_ms", "", 60.0) / 1000.0, 0.001, 1.0);
-        this.stillLp = 0.0;
-        this.stillLpMs = clampv(pms(params, "still_lp_ms", "", 60.0) / 1000.0, 0.001, 1.0);
-        this.stillLp = 0.0;
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
         this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
         this.revCos = 0.36235775;   // cos(1.2 rad), the tuned JSM reversal angle
@@ -320,11 +302,7 @@ fn process(sample, params) {
         steps = steps + 1;
 
         let K = this.K;
-        // stillness is judged on a 60 ms low-pass of the vector speed
-        let la = 1.0 - exp(-step / this.stillLpMs);
-        this.stillLp = this.stillLp + la * (speed - this.stillLp);
-        K[14] = this.stillLp;
-        K[10] = 0.0;
+        K[8] = 0.0;
 
         let alpha = 1.0 - exp(-step / this.smoothTime);
         if this.revOn > 0.5 {
@@ -332,8 +310,16 @@ fn process(sample, params) {
             if pl > 0.000001 && speed > 0.000001 {
                 let c = clampv((this.D[0] * yaw + this.D[1] * pitch) / (pl * speed), -1.0, 1.0);
                 if c < this.revCos {
-                    let s2 = 1.0 - c * c;
-                    if s2 > 0.0 && sqrt(s2) > this.revMag { K[10] = 1.0; }
+                    // the reference lags the hand, so require the new motion to be
+                    // a real fraction of it. |sin| was the old gate and it vanishes
+                    // at a clean 180 deg reversal - the exact case this is for.
+                    if speed > this.revMag * pl {
+                        K[8] = 1.0;
+                        // one trigger per reversal: absorb the new direction so
+                        // the lagging reference cannot re-fire every step
+                        this.D[0] = yaw;
+                        this.D[1] = pitch;
+                    }
                 }
             }
         }
@@ -342,22 +328,22 @@ fn process(sample, params) {
         this.K = K;
 
         let S = this.S;
-        let sy = axis(yaw, step, [S[0], S[1], S[2], S[3], S[4], S[5]], K);
-        let sp = axis(pitch, step, [S[6], S[7], S[8], S[9], S[10], S[11]], K);
+        let sy = axis(yaw, step, [S[0], S[1], S[2], S[3], S[4]], K);
+        let sp = axis(pitch, step, [S[5], S[6], S[7], S[8], S[9]], K);
 
         let sz0 = this.lout[2];
         if !usedSpace {
             // No usable gravity. Filter the third device axis too, so the
             // horizontal one cannot slip through untouched.
-            let sz = axis(iz, step, [S[12], S[13], S[14], S[15], S[16], S[17]], K);
-            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5], sy[6],
-                      sp[1], sp[2], sp[3], sp[4], sp[5], sp[6],
-                      sz[1], sz[2], sz[3], sz[4], sz[5], sz[6]];
+            let sz = axis(iz, step, [S[10], S[11], S[12], S[13], S[14]], K);
+            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5],
+                      sp[1], sp[2], sp[3], sp[4], sp[5],
+                      sz[1], sz[2], sz[3], sz[4], sz[5]];
             sz0 = sz[0];
         } else {
-            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5], sy[6],
-                      sp[1], sp[2], sp[3], sp[4], sp[5], sp[6],
-                      S[12], S[13], S[14], S[15], S[16], S[17]];
+            this.S = [sy[1], sy[2], sy[3], sy[4], sy[5],
+                      sp[1], sp[2], sp[3], sp[4], sp[5],
+                      S[10], S[11], S[12], S[13], S[14]];
         }
 
         fyaw = sy[0];

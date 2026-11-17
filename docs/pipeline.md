@@ -100,8 +100,7 @@ out = OneEuro(...) * (1 - suppressHyst);
 | `peakDecayTime` | 0.065 | 峰值衰减 |
 | `signChangeThr` | 1.5 | 过零检测的幅度门限 |
 | `dirChangeAngleRad` | — | 反转判定角度 |
-| `dirChangeMagRatio` | — | 反转判定幅度 |
-| `driftThreshold` / `driftHoldTimeSec` | 0.15 / 0.2 | 静止判定 |
+| `dirChangeMagRatio` | — | 反转判定：新向量幅值需达到参考的该比例 |
 | `freezeDurationSec` / `freezeOutMul` | — | 冻结窗口 |
 
 ## 调试建议
@@ -111,6 +110,6 @@ out = OneEuro(...) * (1 - suppressHyst);
 1. **低速发黏** → 先把 `smoothThreshold` 设为 0（关平滑），确认是不是低通太强
 2. **抖动透出来** → 提高 `smoothThreshold`，让抑制更早介入
 3. **快速甩枪发钝** → 检查 `smoothThreshold` 是否过大（抑制在高速仍在动作）
-4. **静止时漂移** → 检查 `driftThreshold` 是否过低
+4. **静止时漂移** → 库内已没有静止判定，交给宿主或下游的死区/校准处理
 
 `FAAL_TRACE` 记录了每帧的输入和输出，可以在外部复现整个流程。
