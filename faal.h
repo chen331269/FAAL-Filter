@@ -202,6 +202,7 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 	float riseFactor, fastFallFactor, slowFallFactor, fallFactor;
 	float rawSuppress = 0.0f;
 	float out;
+	int event = 0;      /* a crossing or a reversal, never the drop level */
 	(void)tierWeight;   /* unused since the smoothing stage was removed */
 	(void)vectorSpeed;
 
@@ -266,6 +267,7 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 				{
 					rawSuppress = 1.0f;
 					st->suppressHyst = 1.0f;
+					event = 1;
 				}
 			}
 			st->lastSign = v;
@@ -277,6 +279,7 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 	{
 		rawSuppress = 1.0f;
 		st->suppressHyst = 1.0f;
+		event = 1;
 	}
 
 	/* 8) hysteresis */
@@ -298,7 +301,9 @@ static float do_filter(const FaalParams *p, Axis *st, float v, float dt,
 
 	if (p->freezeDurationSec > 0.0f)
 	{
-		if (st->suppressHyst > p->suppressThr)
+		/* Only an event arms the freeze: the drop level is continuous, so
+		 * arming on hyst alone clamps every deceleration. */
+		if (event && st->suppressHyst > p->suppressThr)
 			st->freezeRemainingSec = p->freezeDurationSec;
 		if (st->freezeRemainingSec > 0.0f)
 		{

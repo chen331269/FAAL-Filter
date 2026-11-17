@@ -36,8 +36,10 @@ out = v × (1 − hyst)          × freeze_mul while the freeze window is active
   crossing / vector reversal;
 - `hyst` chases `raw` with a 2.9 ms rise and a 65 ms fall (the fall shortens to
   ~29 ms once `hyst` is low);
-- the freeze window opens once `hyst` passes `suppress_thr` and holds for
-  `freeze_ms`, multiplying by `freeze_mul` (default 0.1).
+- the freeze window is armed only by a sign crossing or a vector reversal, never
+  by the drop level (drop is continuous, so arming on it clamps every
+  deceleration). Once armed it holds for `freeze_ms` and multiplies the output by
+  `freeze_mul` (default 0.1).
 
 ## Parameters
 
@@ -93,4 +95,4 @@ duplicated in six places (init, the axis calls, both store-backs, both
 returns), and out-of-range indices bypass the whole filter at runtime with a
 single "bypassed" message in the UI.
 
-Current core hash: **`2799383b871c`**.
+Current core hash: **`e1316ace9264`**.

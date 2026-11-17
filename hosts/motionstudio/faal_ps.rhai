@@ -95,9 +95,10 @@ fn axis(v, dt, st, k) {
     // Compare against the last non-zero sample: a crossing that lands exactly
     // on zero is no longer swallowed, which removes the one-sided trigger
     // asymmetry on repeated strokes.
+    let event = false;
     if k[8] > 0.0 && peak > k[0] && absv(v) > 0.000001 {
         if absv(lastSign) > 0.000001 && ((v < 0.0) != (lastSign < 0.0)) {
-            if absv(v - lastSign) / (dt * 1000.0) > k[8] { raw = 1.0; hyst = 1.0; }
+            if absv(v - lastSign) / (dt * 1000.0) > k[8] { raw = 1.0; hyst = 1.0; event = true; }
         }
         lastSign = v;
     }
@@ -107,6 +108,7 @@ fn axis(v, dt, st, k) {
     if k[10] > 0.5 {
         raw = 1.0;
         hyst = 1.0;
+        event = true;
     }
 
     // 8) hysteresis
@@ -118,12 +120,12 @@ fn axis(v, dt, st, k) {
     //    One Euro module used to live here; it was stripped out on 2026-11-15
     let out = v * (1.0 - hyst);
 
-    // 10) freeze window: for freeze_ms after the last time hyst crossed the
-    //     threshold, a flat multiplier holds the leak down. Default 0 - a full
-    //     clamp while the settle finishes.
+    // 10) freeze window: only a sign crossing or a vector reversal arms it - drop
+    //     must not, because drop is a continuous level and would clamp every
+    //     deceleration. Once armed it holds for freeze_ms and scales the leak.
     let frz = st[3];
     if k[9] > 0.0 {
-        if hyst > k[11] { frz = k[9]; }
+        if event && hyst > k[11] { frz = k[9]; }
         if frz > 0.0 {
             out = out * k[12];
             frz = frz - dt;
