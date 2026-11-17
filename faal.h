@@ -69,6 +69,7 @@ typedef struct FaalParams
 	int   enableVectorReversal;
 	float dirChangeMagRatio;
 	float revMinDps;        /* deg/s floor: below this the direction is noise */
+	float revFreezeMinDps;  /* reference speed needed to arm a freeze (0 = any) */
 	float dirChangeAngleRad;
 	float smoothTimeSec;    /* s, memory of the reversal reference */
 
@@ -330,9 +331,16 @@ static int check_reversal_3d(const FaalParams *p, float cosAngle,
 	if (cosTheta >= cosAngle)
 		return 0;
 
-	/* |sin| gate, the original criterion: turns between cosAngle and ~171 deg
-	 * fire, a clean 180 deg reversal is missed. Known and accepted. */
-	return sinTheta > p->dirChangeMagRatio;
+	/* dual mode, chosen from the sign detector: when a crossing detector is
+	 * running it owns clean 180 deg reversals and this one only reinforces
+	 * (|sin| misses 180 deg, by design). Alone, it must catch 180 deg itself,
+	 * so it uses the magnitude ratio instead. */
+	if (p->signChangeThr > 0.0f)
+	{
+		sinTheta = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f));
+		return sinTheta > p->dirChangeMagRatio;
+	}
+	return curLen > p->dirChangeMagRatio * prevLen;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -396,7 +404,8 @@ void faal_defaults(FaalParams *out)
 
 	out->enableVectorReversal = 0;
 	out->dirChangeMagRatio = 0.3f;
-	out->revMinDps = 5.0f;
+	out->revMinDps = 0.0f;
+	out->revFreezeMinDps = 0.0f;
 	out->dirChangeAngleRad = 1.570796f;
 	out->smoothTimeSec = 0.1f;
 
@@ -531,13 +540,24 @@ void faal_process(Faal *ctx, float *v, int dim, float dt)
 				                        (prevLen * curLen),
 				                        -1.0f, 1.0f);
 				if (cosTheta < ctx->cosAngleRad)
-					forceSuppress = sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f)) >
-					                p->dirChangeMagRatio;
+				{
+					int fired = p->signChangeThr > 0.0f
+						? sqrtf(clampf(1.0f - cosTheta * cosTheta, 0.0f, 1.0f)) > p->dirChangeMagRatio
+						: curLen > p->dirChangeMagRatio * prevLen;
+					if (fired)
+						forceSuppress = (p->signChangeThr > 0.0f ||
+						                 prevLen >= p->revFreezeMinDps) ? 1 : 2;
+				}
 			}
 		}
 		else
 		{
-			forceSuppress = check_reversal_3d(p, ctx->cosAngleRad, x, y, z, ctx->dirX, ctx->dirY, ctx->dirZ);
+			if (check_reversal_3d(p, ctx->cosAngleRad, x, y, z, ctx->dirX, ctx->dirY, ctx->dirZ))
+			{
+				float prevLen = sqrtf(ctx->dirX * ctx->dirX + ctx->dirY * ctx->dirY +
+				                      ctx->dirZ * ctx->dirZ);
+				forceSuppress = (p->signChangeThr > 0.0f || prevLen >= p->revFreezeMinDps) ? 1 : 2;
+			}
 		}
 	}
 
