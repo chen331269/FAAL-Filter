@@ -21,8 +21,6 @@
 
 ---
 
----
-
 ## 快速上手（单头文件 C99）
 
 `faal.h` 是完整的实现，声明和代码在同一个文件里（stb 风格）：
@@ -34,7 +32,7 @@
 Faal *f = faal_new();
 FaalParams p;
 faal_defaults(&p);
-p.smoothThreshold = 4.0f;
+p.dropSensitivity = 1.0f;   /* 线性 drop，当前实测手感 */
 faal_set_params(f, &p);
 
 float v[2] = { 10.0f, 3.0f };
@@ -45,7 +43,7 @@ faal_free(f);
 - 纯 C99，只依赖 `math.h` / `stdlib.h` / `string.h`
 - 无全局状态、无线程、无锁
 - `faal_new` 走 malloc；`faal_init` 用调用方给的内存（嵌入式）
-- 上下文约 192 字节
+- `sizeof(Faal)` = 224 字节、`sizeof(FaalParams)` = 100 字节（x64）
 
 ### 接进别的语言
 
@@ -72,15 +70,11 @@ cl /O2 /LD /DFAAL_BUILD_DLL /c faal_shim.c /Fe:faal.dll
 
 ### 等价性
 
-`reference/` 是最早的 C++ 实现，留作回归基准。两者在以下数据上逐帧比对：
+`reference/` 是最早的 C++ 实现，**已冻结**，只作为历史基线保留。
 
-| 数据 | 帧数 | 最大差 |
-|---|---|---|
-| 合成（跟靶 / 甩枪 / 静止 / 抖动 / 尖峰） | 400,000 | 2D 4.24e-05，3D 0 |
-| 真实录制 | 17,930 | 0（逐位一致） |
-| 真实录制 | 13,586 | 8 帧差异，最大 0.132 |
+2026-11-15 ~ 11-18 期间 C 库做过这些改动，两者不再是逐帧等价：移除平滑、移除静止模块、冻结改为只由事件点火、反转改双模式。因此早期那份"40 万帧、最大差 4.24e-05"的对照**不再成立**，不要再引用。
 
-2D 的 4e-5 来自阈值边界上的一次分支翻转（1 ULP 差异被非线性放大），随后自行收敛。
+当前的回归手段是 `_faal_c/suppress_only_test.cpp`（8 项冒烟检查）：常数直通、过零压制与恢复、冻结窗口 × `freezeOutMul`、冻结被 hyst 续期、120° 反转触发、`revMinDps` 挡住静止噪声、纯减速不点火冻结、20 万随机样本无 NaN。
 ## 这是什么
 
 FAAL 是一个轻量级、帧率无关的陀螺仪信号处理器，用于解决体感瞄准中三类最难处理的抖动：
@@ -89,7 +83,9 @@ FAAL 是一个轻量级、帧率无关的陀螺仪信号处理器，用于解决
 - **甩枪回弹**（快速甩动结束后信号反向振荡）
 - **按键抖动**（按下/松开扳机时的高频噪声）
 
-它最初为 [JoyShockMapper](https://github.com/Electronicks/JoyShockMapper) 开发，现在是一个独立的 C++ 模块，**无外部依赖，单头文件 + 单 cpp**，可以直接嵌入任何体感输入管线。
+它最初为 [JoyShockMapper](https://github.com/Electronicks/JoyShockMapper) 开发，现在是一个独立的 **C99 单头文件**实现，无外部依赖，可以直接嵌入任何体感输入管线。当前主要宿主是 [MotionStudio](https://github.com/) 的自定义运动滤波器（Rhai 脚本，见 `hosts/motionstudio/`）。
+
+注意：**静止漂移不再由 FAAL 处理**。库内的静止判定已于 2026-11-18 移除——它和手抖落在同一幅度区间，无法区分，触发时还会把整条抑制链重置。静止时的零偏交给宿主的噪声门或游戏内死区。
 
 ---
 
@@ -117,7 +113,7 @@ FAAL 是一个轻量级、帧率无关的陀螺仪信号处理器，用于解决
 - ✅ **帧率无关** —— 所有时间常数、阈值都归一化到 1000Hz 基准，60Hz / 120Hz / 500Hz / 1000Hz 下行为一致
 - ✅ **自适应抑制** —— 甩枪后自动进入"黏滞"模式，正常跟随时自动进入"跟手"模式，无阈值跳变（像非牛顿流体）
 - ⛔ **平滑层已移除（2026-11-15）** —— FAAL 只做抑制，平滑交给宿主或独立滤波器；保留 `oneEuro*` 字段只为 API 兼容
-- ✅ **矢量反转检测** —— 3D 方向突变检测，替代分轴符号翻转（避免画圆变画方）
+- ✅ **矢量反转检测（双模式）** —— 过零检测在场时退回 `|sin θ|` 当补强（干净的 180° 交给过零）；过零缺席时用幅值比独立负责 180°。两者都只看方向，不碰连续转动
 - ✅ **零依赖** —— 只需要 `<math.h>`，无 STL、无框架
 
 ---
@@ -133,12 +129,14 @@ FAAL 的每轴处理管线：
   │
   ├──► [2] dropSpeed     (|ω| 的每秒衰减率，归一化到 1000Hz)
   │
-  ├──► [3] rawSuppress   = pow(dropSpeed × sensitivity, curve)
+  ├──► [3] rawSuppress   = min(dropSpeed × sensitivity, 1)
+  │                      曲线只有两档：1 = 线性，2 = 再平方（宿主无 pow）
   │                      决定"这一帧应该抑制多少"
   │
   ├──► [4] 符号翻转检测  单帧内 |Δω| 突增 → 强制满抑制
   │
-  ├──► [5] 矢量反转检测  3D 方向角突变 → 三轴同步抑制
+  ├──► [5] 矢量反转检测  与 7.5ms 低通的参考方向比夹角 →
+  │                      双模式（|sin| 或幅值比）→ 触发一次、吸收参考
   │
   ├──► [6] 自适应滞回    suppressHyst 用上升/下降时间常数更新
   │                      fall = fastFall + (slowFall - fastFall) × suppressHyst
@@ -184,13 +182,16 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 
 | 参数 | 默认 | 含义 |
 |---|---|---|
-| `dropSensitivity` | 2.4 | 减速抑制灵敏度（调大 = 更晚触发，调小 = 更敏感） |
-| `dropCurve` | 2.0 | 抑制曲线形状（物理自然值） |
-| `signChangeThr` | 0.5 | 符号翻转触发阈值 |
-| `freezeDurationSec` | 0.024 | 反转后冻结时长（秒） |
+| `dropSensitivity` | 2.4（库）/ 1.0（脚本） | 减速抑制灵敏度，线性档下越大越强 |
+| `dropCurve` | 2.0（库）/ 1.0（脚本） | 曲线：1 = 线性，2 = 二次（更陡） |
+| `signChangeThr` | 0.5 | 符号翻转触发阈值；**设为 0 同时关掉过零**（此时反转自动切到幅值比模式） |
+| `freezeDurationSec` | 0.024 | 冻结时长（秒）；只有事件能点火 |
+| `freezeOutMul` | 0.1 | 冻结期输出倍数 |
 | `enableVectorReversal` | 0 | 矢量反转检测开关 |
-| `dirChangeMagRatio` | 0.3 | 矢量反转的**法向比例阈值**（越大越严苛） |
-| `dirChangeAngleRad` | 1.2 | 矢量反转的**角度阈值**（弧度） |
+| `dirChangeMagRatio` | 0.3 | 反转门限，**语义随模式变**：过零在场时是 `\|sin θ\|` 比例，缺席时是"新速度 / 参考速度" |
+| `dirChangeAngleRad` | 1.2 | 反转角度阈值（弧度）；实测手感值 0.9 |
+| `revMinDps` | 0（库） | 方向判定的绝对速度下限；0 = 不设（静止噪声会触发，换来"钉住"效果） |
+| `revFreezeMinDps` | 0 | 过零缺席时，参考速度达到多少才允许触发**点火冻结**（否则只压制） |
 
 ### 平滑参数（已移除）
 
@@ -214,7 +215,7 @@ FAAL 的解决方案：
 
 1. **时间常数归一化**：所有滞回系数用 `1 - exp(-dt / tau)` 计算
 2. **速度归一化**：`dropSpeed` 和 `signChange` 除以 `dt × 1000`，映射到 1000Hz 基准
-3. **状态累积**：`freezeRemainingSec` 和 `stillTimeSec` 存**秒**，每帧 `-= dt`，不是帧计数
+3. **状态累积**：`freezeRemainingSec` 存**秒**，每帧 `-= dt`，不是帧计数
 4. **dt 防御**：入口 `dt = clamp(dt, 1e-3, 0.05)`，异常 dt 优雅退化
 
 **结果**：1000Hz 下调好的参数在 60Hz 下行为一致，反之亦然。用户换设备不用重新调参。
@@ -225,40 +226,36 @@ FAAL 的解决方案：
 
 ### 基本用法
 
-```cpp
-#include "faal_filter.h"
+```c
+#include "faal.h"          /* 一个 TU 里定义 FAAL_IMPLEMENTATION */
 
-// 初始化（可选，通常自动）
-ResetFaalFilter();
+Faal *f = faal_new();
+FaalParams p;
+faal_defaults(&p);
+faal_set_params(f, &p);
 
-// 每帧调用
-float gx = imu.gyroX;
-float gy = imu.gyroY;
-faal_filter(gx, gy, dt);   // 2 轴
-// 或
-faal_filter(gx, gy, gz, dt);  // 3 轴
-
-// gx, gy 已被就地修改为滤波后的值
+float v[2] = { imu.gyroX, imu.gyroY };
+faal_process(f, v, 2, dt);    /* 就地修改；3 轴传 3 */
+faal_free(f);
 ```
 
 ### 设置参数
 
-```cpp
+```c
 FaalParams p;
-p.hystRiseTime = 0.0029f;
-p.hystFallTime = 0.065f;
-p.peakDecayTime = 0.065f;
-p.oneEuroFcMin = 2.0f;
-p.oneEuroBeta = 0.08f;
-// ... 其他参数
-SetFaalParams(p);
+faal_defaults(&p);            /* 先拿默认值，再改想要的字段 */
+p.hystFallTime   = 0.065f;
+p.peakDecayTime  = 0.065f;
+p.dropSensitivity = 1.0f;
+p.dropCurve       = 1.0f;
+faal_set_params(f, &p);
 ```
 
 ### 复位
 
-```cpp
-// 设备断开、切换、重新校准时调用
-ResetFaalFilter();
+```c
+/* 设备断开、切换、重新校准时调用 */
+faal_reset(f);
 ```
 
 ### ⚠️ 在 JoyShockMapper (JSM) 中的最佳实践位置
@@ -301,7 +298,8 @@ FAAL 特别适合以下场景：
 
 FAAL 相比 One Euro 的**额外价值**是"甩枪结束后主动保抑制"——这是 One Euro 本身不具备的能力。
 
-[![FAAL 滤波器实机演示]<img width="2048" height="1053" alt="封面" src="https://github.com/user-attachments/assets/7f4b978e-124c-4a89-aeef-b5cc84c22119" />](https://www.bilibili.com/video/BV1iwxr6VE5q/)
+[![FAAL 滤波器实机演示](https://github.com/user-attachments/assets/7f4b978e-124c-4a89-aeef-b5cc84c22119)](https://www.bilibili.com/video/BV1iwxr6VE5q/)
+
 ---
 
 ## 致谢
