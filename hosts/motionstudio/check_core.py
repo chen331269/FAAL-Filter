@@ -22,7 +22,7 @@ import sys
 
 BASE = pathlib.Path(__file__).resolve().parent
 REFERENCE = "faal_B_lastsign.rhai"
-GUARDED = ["faal_B_lastsign.rhai", "faal_ps.rhai"]
+GUARDED = ["faal_B_lastsign.rhai", "faal_B_rev_mag.rhai", "faal_ps.rhai"]
 EXPECTED = "62cbf6919484"
 
 
