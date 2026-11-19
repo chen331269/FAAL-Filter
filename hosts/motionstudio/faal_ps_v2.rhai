@@ -1,5 +1,5 @@
-// faal_ps_v1.rhai - v1 - 2026-11-18 - raw stage, 3-axis player space
-// axis hash: 62cbf6919484   (bump the _vN in the file name on every change)
+// faal_ps_v2.rhai - v2 - 2026-11-19 - raw stage, 3-axis player space; same reversal as v4
+// axis diverges from the mainline on purpose (freeze gate k[12]); not under check_core
 // FAAL for MotionStudio — raw_gyro stage, player-space filter (PS_MOTION path).
 //
 // JoyShockMapper's PS_MOTION path does not filter device axes. It derives the
@@ -112,7 +112,8 @@ fn axis(v, dt, st, k) {
     if k[8] > 0.5 {
         raw = 1.0;
         hyst = 1.0;
-        event = true;
+        // a force may still only suppress, without arming the freeze window
+        if k[12] > 0.5 { event = true; }
     }
 
     // 8) hysteresis
@@ -170,12 +171,15 @@ fn process(sample, params) {
             0.0,
             pf(params, "suppress_thr", "", 0.45),
             clampv(pf(params, "freeze_mul", "", 0.1), 0.0, 1.0),
-            pf(params, "drop_curve", "", 2.0)
+            pf(params, "drop_curve", "", 2.0),
+            1.0
         ];
 
         this.smoothTime = clampv(pms(params, "smooth_time_ms", "FAAL_SMOOTH_TIME_SEC", 7.5) / 1000.0, 0.001, 1.0);
         this.revOn = pf(params, "rev_on", "FAAL_ENABLE_VECTOR_REVERSAL", 1.0);
         this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.15), 0.0, 1.0);
+        this.revSin = if pf(params, "sign_thr", "FAAL_SIGN_CHANGE_THR", 0.5) > 0.0 { 1.0 } else { 0.0 };
+        this.revFreezeRef = clampv(pf(params, "rev_freeze_dps", "", 30.0), 0.0, 500.0);
         // an explicit cos wins; otherwise take the angle the profile carries
         let rc = -2.0;
         if params.contains("rev_cos") { rc = params["rev_cos"] * 1.0; }
@@ -325,6 +329,7 @@ fn process(sample, params) {
 
         let K = this.K;
         K[8] = 0.0;
+        K[12] = 1.0;
 
         let alpha = 1.0 - exp(-step / this.smoothTime);
         if this.revOn > 0.5 {
@@ -332,10 +337,22 @@ fn process(sample, params) {
             if pl > 0.000001 && speed > 0.000001 {
                 let c = clampv((this.D[0] * yaw + this.D[1] * pitch) / (pl * speed), -1.0, 1.0);
                 if c < this.revCos {
-                    // the original |sin| gate: fires for turns between revCos and
-                    // ~171 deg; a clean 180 deg reversal is a known miss
-                    let s2 = 1.0 - c * c;
-                    if s2 > 0.0 && sqrt(s2) > this.revMag { K[8] = 1.0; }
+                    // sign detector present -> |sin| reinforcement, 180 deg is its
+                    // job; absent -> magnitude ratio, this owns 180 deg too
+                    let fire = false;
+                    if this.revSin > 0.5 {
+                        let s2 = 1.0 - c * c;
+                        fire = s2 > 0.0 && sqrt(s2) > this.revMag;
+                    } else {
+                        fire = speed > this.revMag * pl;
+                    }
+                    if fire {
+                        K[8] = 1.0;
+                        if this.revSin < 0.5 && pl <= this.revFreezeRef { K[12] = 0.0; }
+                        // one trigger per reversal, always
+                        this.D[0] = yaw;
+                        this.D[1] = pitch;
+                    }
                 }
             }
         }

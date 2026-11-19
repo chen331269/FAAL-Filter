@@ -21,7 +21,7 @@ import re
 import sys
 
 BASE = pathlib.Path(__file__).resolve().parent
-PREFIXES = ["faal_B_lastsign", "faal_B_rev_mag", "faal_ps"]
+PREFIXES = ["faal_B_lastsign"]   # v4 and ps v2 carry the freeze-gate slot and diverge on purpose
 
 
 def newest(prefix: str) -> str | None:
