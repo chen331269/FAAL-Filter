@@ -203,6 +203,8 @@ hystFallFastTime = hystFallTime × 0.446   // 无抑制时的快出时间
 
 MotionStudio 侧的宿主脚本在 [`hosts/motionstudio/`](hosts/motionstudio/)，那份 README 说明了阶段、参数和校验方式；当前基线是 `faal_B_rev_mag_v10.rhai`（`before_builtin`，2D），另有 `faal_ps_v2.rhai` / `faal_ps_world_v1.rhai` 两条 3D 路径。
 
+`faal.h` 本体停在 **v4 语义**（2026-11-18 的 `f8204e9`）：参考向量总是吸收（`|sin|` 分支只触发一次）、没有 50 ms 启动保护、还带着已从脚本删除的 `revMinDps`。v10 目前只存在于宿主脚本里，差别与移植清单见 [`hosts/motionstudio/README.md`](hosts/motionstudio/README.md)。
+
 **实际生效约 13 个可调参数**——相比大多数体感滤波器动辄 30+ 参数，这已经是最精简的配置。
 
 ---

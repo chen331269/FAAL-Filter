@@ -102,6 +102,21 @@ single "bypassed" message in the UI.
 
 Current core hash: **`62cbf6919484`**.
 
+## Where `faal.h` stands
+
+The C library was frozen at the v4 semantics on 2026-11-18 (`f8204e9`). It has
+the same two-mode reversal detector, but three differences matter if you are
+porting between the two:
+
+| | `faal.h` (v4) | `faal_B_rev_mag_v10.rhai` |
+|---|---|---|
+| reference absorption | always absorbs, so the `\|sin\|` branch fires once | the `\|sin\|` branch does **not** absorb: it re-fires while the reference catches up |
+| startup guard | none | the first 50 ms may suppress but may not arm the freeze |
+| `revMinDps` | still present | removed on 2026-11-18 |
+
+So v10 currently lives only in the Rhai host scripts; the guard and the
+no-absorb branch are the two things to port if the C path has to match.
+
 ## Versioning
 
 Every change bumps `_vN` in the file name, so the script you imported can be
