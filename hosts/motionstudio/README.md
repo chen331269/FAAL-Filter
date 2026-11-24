@@ -1,6 +1,6 @@
 # FAAL as a MotionStudio custom motion filter
 
-Two Rhai scripts that run FAAL inside MotionStudio, plus the tooling that keeps
+Four Rhai scripts that run FAAL inside MotionStudio, plus the tooling that keeps
 them honest. They are the host-side counterpart to `faal.h`: same suppression
 algorithm, ported to the engine's 1 ms internal clock.
 
@@ -8,11 +8,14 @@ algorithm, ported to the engine's 1 ms internal clock.
 
 | File | Stage | Use |
 |---|---|---|
-| `faal_B_lastsign_v1.rhai` | `before_builtin` (2D) | the mainline: turn/pitch pair, projected by the host |
-| `faal_ps_v1.rhai` | `raw_gyro` (3D) | player-space path with its own gravity estimate and PLAYER gain |
+| `faal_B_rev_mag_v10.rhai` | `before_builtin` (2D) | **current baseline**: the turn/pitch pair, projected by the host |
+| `faal_B_lastsign_v1.rhai` | `before_builtin` (2D) | the previous mainline: `\|sin\|` reversal only, no freeze gate; kept for comparison |
+| `faal_ps_v2.rhai` | `raw_gyro` (3D) | player-space path with its own gravity estimate and PLAYER gain |
+| `faal_ps_world_v1.rhai` | `raw_gyro` (3D) | pure world-space (AxisRay) projection, for hosts that would otherwise apply their own space conversion |
 
-Only one of them belongs in a profile at a time. `faal_B_lastsign_v1.rhai` is the
-one that has been through the most real play.
+Only one of them belongs in a profile at a time. `faal_B_rev_mag_v10.rhai` is the
+one in current play; `faal_B_lastsign_v1.rhai` is the version before the freeze
+gate and is kept so the two can be compared on the same signal.
 
 ## What the filter does now
 
@@ -62,7 +65,8 @@ fallbacks, and `params` accepts either.
 | `freeze_mul` | — | 0.1 | how much leaks through while frozen |
 | `rev_on` | `FAAL_ENABLE_VECTOR_REVERSAL` | 1 | vector-reversal override |
 | `rev_angle_rad` | `FAAL_DIR_CHANGE_ANGLE_RAD` | 1.2 | how sharp a turn counts as a reversal (69°); `rev_cos` still wins if present |
-| `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | `\|sin θ\|` gate; a clean 180° reversal is a known miss |
+| `rev_mag` | `FAAL_DIR_CHANGE_MAG_RATIO` | 0.15 | with `sign_thr > 0`: the `\|sin θ\|` gate; with `sign_thr = 0`: the velocity-ratio gate and must not be 0 |
+| `rev_freeze_dps` | — | 90 | `sign_thr = 0` only: reference speed below which a trigger only dips, without arming the freeze |
 | `smooth_time_ms` | `FAAL_SMOOTH_TIME_SEC` | 7.5 | only the reversal reference's low-pass |
 
 `FAAL_ONE_EURO_FC_MIN` / `FAAL_ONE_EURO_BETA` are no longer read; delete them
@@ -75,18 +79,19 @@ the profile with `inject.pl` while MotionStudio is closed (it also mirrors
 `.bak` and keeps a timestamped rollback):
 
 ```
-perl inject.pl faal_B_lastsign_v1.rhai
-perl inject.pl faal_B_lastsign_v1.rhai --only 0   # default layer only
-perl inject.pl faal_B_lastsign_v1.rhai --dry
+perl inject.pl faal_B_rev_mag_v10.rhai
+perl inject.pl faal_B_rev_mag_v10.rhai --only 0   # default layer only
+perl inject.pl faal_B_rev_mag_v10.rhai --dry
 ```
 
-## Keeping the two copies in step
+## Keeping the core in step
 
-`axis()` must be byte-identical in both scripts (comments and whitespace
-stripped). Edit it in `faal_B_lastsign_v1.rhai`, then:
+`faal_B_lastsign_v1.rhai` is the reference for the FAAL core. The other scripts
+are deliberately outside the hash check: `faal_B_rev_mag_v10.rhai` adds the
+freeze-gate slot and splits the reversal detector, and the `faal_ps_*` scripts
+run the same core on a 3D path. Edit the core in the reference, then:
 
 ```
-python check_core.py --sync   # copies axis() across
 python check_core.py          # hash + structural + index checks
 ```
 
@@ -100,12 +105,11 @@ Current core hash: **`62cbf6919484`**.
 ## Versioning
 
 Every change bumps `_vN` in the file name, so the script you imported can be
-identified at a glance: `faal_B_lastsign_v3.rhai` is newer than `_v2`. The first
-two lines of each file repeat the version, the date and the current `axis()`
-hash. `check_core.py` resolves the highest `_vN` per prefix, so a bump never
-needs a code change here.
+identified at a glance: `faal_B_rev_mag_v10.rhai` is newer than `_v9`. Each file
+opens with its version, date and one line of what changed. `check_core.py`
+resolves the highest `_vN` per prefix, so a bump never needs a code change here.
 
-## Milestone: v4 (2026-11-18)
+## Milestone: v4 (2026-11-18, superseded by v10)
 
 `faal_B_rev_mag_v4.rhai` is the first version that felt right in play. Its
 vector detector does three things at once, and that combination is the whole
@@ -130,7 +134,7 @@ Two modes are chosen once at init from `sign_thr`:
 With `sign_thr = 0` the freeze is additionally gated: a trigger whose reference
 is slower than `rev_freeze_dps` only dips, it does not arm the 24 ms window.
 
-### Shipped parameters (three layers)
+### Shipped parameters (v4, 2026-11-18)
 
 | Parameter | default | ADS layer | third layer |
 |---|---|---|---|
@@ -146,4 +150,26 @@ is slower than `rev_freeze_dps` only dips, it does not arm the 24 ms window.
 | `FAAL_HYST_RISE_TIME` | 0.0029 | 0.0029 | 0.0029 |
 | `FAAL_HYST_FALL_TIME` | 0.065 | 0.065 | 0.065 |
 | `FAAL_PEAK_DECAY_TIME` | 0.065 | 0.065 | 0.065 |
+
+## Milestone: v10 (2026-11-24)
+
+v10 keeps v4's freeze gate but splits the reversal detector back into the two
+behaviours it was merging. The mode is fixed at init from `sign_thr` (the engine
+rebuilds the instance whenever a parameter changes, so switching layers switches
+modes with it):
+
+| | sign detector on (`sign_thr > 0`) | sign detector off (`sign_thr = 0`) |
+|---|---|---|
+| gate | `sqrt(1 − c²) > rev_mag`, i.e. `\|sin θ\|` | `speed > rev_mag × \|ref\|` |
+| reference absorption | none — it re-fires while the reference catches up, which is where the older mainline's punch came from | absorbed, so one reversal yields one trigger |
+| freeze gate `rev_freeze_dps` | inactive | active: a slow reference only dips, it does not freeze |
+| clean 180° reversal | left to the sign detector | caught here |
+
+Both modes carry the same startup guard: for the first 50 ms (`nStep <= 50`) a
+trigger may only suppress, it may not arm the freeze window.
+
+The reason for the split: with the sign detector running, v4's absorption made
+the turn feel weaker than the pre-v4 mainline had, while with the detector off
+nothing else can see a clean 180° and the magnitude gate plus its freeze gate are
+the only way to catch it. v10 is v4 with that split and the startup guard.
 

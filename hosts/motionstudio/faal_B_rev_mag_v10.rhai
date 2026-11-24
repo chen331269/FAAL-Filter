@@ -1,10 +1,10 @@
-// faal_B_rev_mag_v4.rhai - v4 - 2026-11-18 - experiment: dual-mode + freeze gate; absorb is mandatory
+// faal_B_rev_mag_v10.rhai - v10 - 2026-11-24 - baseline: sign detector on -> pre-v4 |sin| (no absorb); off -> magnitude gate
 // axis diverges from the mainline on purpose (freeze gate); not under check_core
-// EXPERIMENT - not the mainline. Identical to faal_B_lastsign.rhai except for the
-// reversal detector, which uses a magnitude ratio instead of |sin|. The |sin| gate
-// cannot see a clean 180 deg reversal (sin 180 = 0); on a 2 Hz +-100 dps stroke it
-// fires 0 times, this one fires 24. A 5 dps floor keeps rest noise from firing it.
-//
+// FAAL for MotionStudio - before_builtin (2D). v10 = v4 + startup guard + the
+// mode split: with the sign detector running it keeps the pre-v4 |sin| gate and
+// does not absorb the reference, so it re-fires while the reference catches up;
+// without it, the magnitude gate owns a clean 180 deg reversal and its freeze
+// gate applies. Params with sign_thr = 0: rev_mag must not be 0.
 
 
 
@@ -212,6 +212,7 @@ fn process(sample, params) {
             clampv(cos_approx(pf(params, "rev_angle_rad", "FAAL_DIR_CHANGE_ANGLE_RAD", 0.9)), -1.0, 1.0)
         };
         this.revMag = clampv(pf(params, "rev_mag", "FAAL_DIR_CHANGE_MAG_RATIO", 0.05), 0.0, 1.0);
+        this.nStep = 0.0;
         this.revFreezeRef = clampv(pf(params, "rev_freeze_dps", "", 30.0), 0.0, 500.0);
         // the sign detector, if enabled, owns clean 180 deg reversals; this one
         // then only reinforces off-axis turns, exactly as the old version did
@@ -318,22 +319,25 @@ fn process(sample, params) {
                     //                    clean 180 deg reversal belongs to the sign
                     //                    detector, so this stays out of its way.
                     //   sign_thr == 0 -> magnitude gate, it owns 180 deg too.
-                    let fire = false;
-                    if this.revSin > 0.5 {
+                    if (this.revSin > 0.5) {
+                        // a sign detector is running: keep the pre-v4 behaviour. |sin|
+                        // gate, no absorption, no freeze gate - it re-fires while the
+                        // reference catches up, which is how it felt strongest.
                         let s2 = 1.0 - c * c;
-                        fire = s2 > 0.0 && sqrt(s2) > this.revMag;
+                        if (s2 > 0.0 && sqrt(s2) > this.revMag) {
+                            K[8] = 1.0;
+                            if (this.nStep <= 50.0) { K[12] = 0.0; }
+                        }
                     } else {
-                        fire = speed > this.revMag * pl;
-                    }
-                    if fire {
-                        K[8] = 1.0;
-                        // crossing absent: only a trigger whose reference is still fast
-                        // may arm the freeze; slow/coherent turns just dip
-                        if this.revSin < 0.5 && pl <= this.revFreezeRef { K[12] = 0.0; }
-                        // one trigger per reversal, always: the reference is pulled
-                        // to the new direction so it cannot re-fire while catching up
-                        this.D[0] = yaw;
-                        this.D[1] = pitch;
+                        // on its own it must cover 180 deg: magnitude ratio, one trigger
+                        // per reversal, and a slow reference only dips
+                        if (speed > this.revMag * pl) {
+                            K[8] = 1.0;
+                            if (this.nStep <= 50.0) { K[12] = 0.0; }
+                            if (pl <= this.revFreezeRef) { K[12] = 0.0; }
+                            this.D[0] = yaw;
+                            this.D[1] = pitch;
+                        }
                     }
                 }
             }
@@ -341,6 +345,8 @@ fn process(sample, params) {
         this.D[0] = this.D[0] + alpha * (yaw - this.D[0]);
         this.D[1] = this.D[1] + alpha * (pitch - this.D[1]);
         this.K = K;
+
+        this.nStep = this.nStep + 1.0;
 
         let S = this.S;
         let rx = axis(yaw, step, [S[0], S[1], S[2], S[3], S[4]], K);
